@@ -16,12 +16,14 @@ interface ResponsiveTooltipProps {
   children: React.ReactNode;
   content: React.ReactNode;
   contentClassName?: string;
+  arrowClassName?: string;
 }
 
 export const ResponsiveTooltip = ({
   children,
   content,
   contentClassName,
+  arrowClassName,
 }: ResponsiveTooltipProps) => {
   const isMobile = useIsMobile();
 
@@ -41,7 +43,10 @@ export const ResponsiveTooltip = ({
   return (
     <Tooltip>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent className={cn(contentClassName, "max-w-[300px]")}>
+      <TooltipContent
+        className={cn(contentClassName, "max-w-[300px]")}
+        arrowClassName={arrowClassName}
+      >
         {content}
       </TooltipContent>
     </Tooltip>

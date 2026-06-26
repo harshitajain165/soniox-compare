@@ -6,7 +6,7 @@ import React, {
   type ReactNode,
 } from "react";
 import { FALLBACK_MODEL_DATA } from "@/lib/fallback-model-data";
-import { modelInfoSchema, type ModelInfo } from "@/lib/translation-utils";
+import { modelInfoSchema, type ModelInfo } from "@/lib/schemas";
 
 interface ModelDataContextType {
   modelInfo: ModelInfo | null;

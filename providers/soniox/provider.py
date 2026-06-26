@@ -40,37 +40,8 @@ class SonioxProvider(BaseProvider):
                 "enable_speaker_diarization": self.config.params.enable_speaker_diarization,  # noqa
                 "enable_language_identification": self.config.params.enable_language_identification,  # noqa
                 "language_hints": self.config.params.language_hints,
-                "context": self.config.params.context,
+                "context": {"text": self.config.params.context},
             }
-            if self.config.params.mode == "mt":
-                assert self.config.params.translation is not None
-                translation_config = self.config.params.translation
-                if translation_config.type == "one_way":
-                    source_languages = translation_config.source_languages
-
-                    if translation_config.target_language == "en":
-                        assert len(source_languages) > 0
-                        if source_languages[0] != "*":
-                            init_msg["language_hints"].append(source_languages[0])
-                            source_languages = ["*"]
-
-                    translation = {
-                        "type": "one_way",
-                        "target_language": translation_config.target_language,
-                        "source_languages": source_languages,
-                    }
-                else:
-                    assert translation_config.language_a
-                    assert translation_config.language_b
-
-                    translation = {
-                        "type": "two_way",
-                        "language_a": translation_config.language_a,
-                        "language_b": translation_config.language_b,
-                    }
-
-                init_msg["translation"] = translation
-
             if self.config.params.enable_language_identification:
                 init_msg["enable_language_identification"] = True
 
@@ -111,9 +82,13 @@ class SonioxProvider(BaseProvider):
         await self.send(end_msg)
 
     async def receive(self) -> list[dict[str, Any]]:
-        items = list[dict[str, Any]]()
+        try:
+            first = await asyncio.wait_for(self.host_queue.get(), timeout=0.1)
+        except asyncio.TimeoutError:
+            return []
+        items = [first]
         while not self.host_queue.empty():
-            items.append(await self.host_queue.get())
+            items.append(self.host_queue.get_nowait())
         return items
 
     async def _send_loop(self):
@@ -143,7 +118,6 @@ class SonioxProvider(BaseProvider):
                         start_ms = t.get("start_ms")
                         end_ms = t.get("end_ms")
                         confidence = t.get("confidence")
-                        translation_status = t.get("translation_status")
 
                         parts.append(
                             make_part(
@@ -151,7 +125,6 @@ class SonioxProvider(BaseProvider):
                                 is_final=is_final,
                                 speaker=speaker,
                                 language=language,
-                                translation_status=translation_status,
                                 start_ms=start_ms,
                                 end_ms=end_ms,
                                 confidence=confidence,
@@ -185,16 +158,15 @@ class SonioxProvider(BaseProvider):
         supported = FeatureStatus.supported()
         return SupportedFeatures(
             name="Soniox",
-            model="stt-rt-preview",
+            model="stt-rt-v5",
             single_multilingual_model=supported,
             language_hints=supported,
+            max_language_hints=None,  # unlimited
             language_identification=supported,
             speaker_diarization=supported,
             customization=supported,
             timestamps=supported,
             confidence_scores=supported,
-            translation_one_way=supported,
-            translation_two_way=supported,
             real_time_latency_config=supported,
             endpoint_detection=supported,
             manual_finalization=supported,

@@ -5,15 +5,19 @@ import base64
 import json
 from typing import Any
 
-import aiohttp
 import websockets
 
+from providers.audio import StreamResampler
 from providers.base_provider import (
     BaseProvider,
     ProviderError,
 )
 from providers.config import ProviderConfig, SupportedFeatures, FeatureStatus
 from utils import make_part
+
+# OpenAI's GA Realtime API only accepts 24 kHz for the "audio/pcm" input format,
+# so incoming audio is resampled to this rate before being sent.
+OPENAI_SAMPLE_RATE = 24000
 
 
 class OpenaiProvider(BaseProvider):
@@ -29,6 +33,10 @@ class OpenaiProvider(BaseProvider):
         self.silence_duration_ms: int = 100
         self.end_event = asyncio.Event()
 
+        self._resampler = StreamResampler(
+            in_rate=self.config.common.sample_rate, out_rate=OPENAI_SAMPLE_RATE
+        )
+
     async def connect(self) -> None:
         if self._is_connected:
             return
@@ -39,84 +47,39 @@ class OpenaiProvider(BaseProvider):
 
         try:
             self.end_event.clear()
-            if len(self.config.params.language_hints) > 1:
-                raise ProviderError("OpenAI supports at most one language input.")
-
+            self._resampler.reset()
+            # language_hints is already capped to OpenAI's single-hint limit by
+            # validate_provider_capabilities (it falls back to auto-detection when
+            # more than one language is requested).
             language = None
-            if self.config.params.mode == "stt":
-                if self.config.params.language_hints:
-                    language = self.config.params.language_hints[0]
-            elif self.config.params.mode == "mt":
-                if not (
-                    self.config.params.translation
-                    and self.config.params.translation.source_languages
-                ):
-                    raise ProviderError(
-                        "Missing translation source language for MT mode."
-                    )
-                language = self.config.params.translation.source_languages[0]
+            if self.config.params.language_hints:
+                language = self.config.params.language_hints[0]
 
-            # Create a transcription session via the REST API to obtain an ephemeral
-            # token.
-            # This endpoint uses the beta header "OpenAI-Beta: assistants=v2".
-            # https://platform.openai.com/docs/api-reference/realtime-client-events/transcription_session/update
-
-            # For translations we do not use https://api.openai.com/v1/audio/translations endpoint.
-            # Instead we use transcription session with a special prompt. Any language
-            # is supported as long as it has ISO-639-1 ("en") code.
+            # The Realtime API is GA. As a trusted server-side client we connect
+            # directly with the standard API key (ephemeral client secrets via
+            # /v1/realtime/client_secrets are only needed for browser clients) to the
+            # dedicated transcription intent and then configure the session.
+            # https://developers.openai.com/api/reference/resources/realtime/subresources/client_secrets/
 
             session_settings = self._build_transcription_settings(language)
 
-            payload = {
-                "input_audio_format": "pcm16",
-                **session_settings,
-            }
-            headers = {
-                "Authorization": f"Bearer {self.config.service.api_key}",
-                "Content-Type": "application/json",
-                "OpenAI-Beta": "assistants=v2",
-            }
-            if language is not None:
-                payload["input_audio_transcription"]["language"] = language  # type: ignore # noqa
-
-            # Fix this, so that it is not hardcoded - it can be derived from
-            # websocket url.
-            create_session_url: str = (
-                "https://api.openai.com/v1/realtime/transcription_sessions"
-            )
-
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    create_session_url, json=payload, headers=headers
-                ) as resp:
-                    if resp.status != 200:
-                        text = await resp.text()
-                        raise ProviderError(
-                            "Failed to create transcription session: "
-                            f" {resp.status} {text}"
-                        )
-                    data = await resp.json()
-                    ephemeral_token = data["client_secret"]["value"]
-
             connection_headers = {
-                "Authorization": f"Bearer {ephemeral_token}",
-                "OpenAI-Beta": "realtime=v1",
+                "Authorization": f"Bearer {self.config.service.api_key}",
             }
 
             self.websocket = await websockets.connect(
-                self.config.service.websocket_url, additional_headers=connection_headers
+                f"{self.config.service.websocket_url}?intent=transcription",
+                additional_headers=connection_headers,
             )
 
-            update_event = {
-                "type": "transcription_session.update",
-                "session": session_settings,
-            }
-            if language is not None:
-                update_event["session"]["input_audio_transcription"]["language"] = (
-                    language  # type: ignore # noqa
+            await self.websocket.send(
+                json.dumps(
+                    {
+                        "type": "session.update",
+                        "session": session_settings,
+                    }
                 )
-
-            await self.websocket.send(json.dumps(update_event))
+            )
 
             self._is_connected = True
             # Start bg tasks
@@ -154,9 +117,13 @@ class OpenaiProvider(BaseProvider):
             self.end_event.set()
 
     async def receive(self) -> list[dict[str, Any]]:
-        items = list[dict[str, Any]]()
+        try:
+            first = await asyncio.wait_for(self.host_queue.get(), timeout=0.1)
+        except asyncio.TimeoutError:
+            return []
+        items = [first]
         while not self.host_queue.empty():
-            items.append(await self.host_queue.get())
+            items.append(self.host_queue.get_nowait())
         return items
 
     async def _send_loop(self):
@@ -164,7 +131,8 @@ class OpenaiProvider(BaseProvider):
             msg = await self.client_queue.get()
             try:
                 if self.websocket:
-                    audio_chunk = base64.b64encode(msg).decode("utf-8")
+                    pcm = self._resampler.process(msg) if isinstance(msg, bytes) else msg
+                    audio_chunk = base64.b64encode(pcm).decode("utf-8")
                     audio_event = {
                         "type": "input_audio_buffer.append",
                         "audio": audio_chunk,
@@ -247,6 +215,15 @@ class OpenaiProvider(BaseProvider):
                             )
                     if self.end_event.is_set():
                         break
+                elif event_type == "error" or (
+                    event_type is not None and event_type.endswith(".failed")
+                ):
+                    error = event.get("error") or {}
+                    message = error.get("message") or "OpenAI transcription failed."
+                    # Empty buffer on commit just means there was nothing left to finalize; ignore it.
+                    if error.get("code") == "input_audio_buffer_commit_empty":
+                        continue
+                    raise ProviderError(message)
         except Exception as ex:
             self.error = ex
             await self._handle_error(ex)
@@ -264,18 +241,26 @@ class OpenaiProvider(BaseProvider):
         await self.disconnect()
 
     def _build_transcription_settings(self, language: str | None) -> dict:
-        """Builds transcription settings shared by REST and Websocket init to avoid duplication"""
-        settings = {
+        """Builds the GA transcription session object sent in the session.update event."""
+        transcription: dict[str, Any] = {
             "model": self.config.service.model,
-            "prompt": self.config.service.prompt,
         }
+        if self.config.service.prompt:
+            transcription["prompt"] = self.config.service.prompt
         if language:
-            settings["language"] = language
+            transcription["language"] = language
+
         return {
-            "input_audio_transcription": settings,
-            "turn_detection": {
-                "type": "server_vad",
-                "silence_duration_ms": self.silence_duration_ms,
+            "type": "transcription",
+            "audio": {
+                "input": {
+                    "format": {"type": "audio/pcm", "rate": OPENAI_SAMPLE_RATE},
+                    "transcription": transcription,
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "silence_duration_ms": self.silence_duration_ms,
+                    },
+                }
             },
             "include": [
                 "item.input_audio_transcription.logprobs",
@@ -296,8 +281,6 @@ class OpenaiProvider(BaseProvider):
             customization=supported,
             timestamps=unsupported,
             confidence_scores=supported,
-            translation_one_way=supported,
-            translation_two_way=unsupported,
             real_time_latency_config=unsupported,
             endpoint_detection=unsupported,
             manual_finalization=unsupported,

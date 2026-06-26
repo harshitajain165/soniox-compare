@@ -15,11 +15,15 @@ import { MockWebSocket } from "../lib/mock-websocket";
 import { useUrlSettings } from "../hooks/use-url-settings";
 
 const USE_MOCK_DATA = false;
+
+// After sending "END" we keep the socket's message handler attached for a short
+// window so providers that only finalize on close (e.g. Cartesia, Google) can
+// flush their last transcript before we close the connection.
+const WS_DRAIN_MS = 5000;
 export interface TranscriptPart {
   text: string;
   speaker?: number | null;
   language?: string | null;
-  translation_status?: "original" | "translation";
   start_ms?: number | null;
   end_ms?: number | null;
   confidence?: number | null;
@@ -40,6 +44,16 @@ export interface OutputData {
 
 export type ProviderOutputs = Record<ProviderName, OutputData>;
 
+// Tracks when a provider produced its first and most recent transcript token in
+// the current session. Used to estimate cost over the provider's *active*
+// window (first token -> last token) rather than the full session duration.
+export interface ProviderTiming {
+  firstTokenAt: number | null;
+  lastTokenAt: number | null;
+}
+
+export type ProviderTimings = Record<ProviderName, ProviderTiming>;
+
 export type AudioRecordingState =
   | "idle"
   | "starting"
@@ -55,6 +69,7 @@ export interface RawMessage {
 interface ComparisonContextState {
   recordingState: AudioRecordingState;
   providerOutputs: ProviderOutputs;
+  providerTimings: ProviderTimings;
   appError: string | null;
   rawMessages: RawMessage[];
   audioReady: boolean;
@@ -66,6 +81,7 @@ interface ComparisonContextState {
 interface ComparisonContextActions {
   startRecording: () => Promise<void>;
   stopRecording: () => void;
+  togglePreview: () => Promise<void>;
   clearTranscriptOutputs: () => void;
   clearRawMessages: () => void;
   setAudio: (audioUrl: string, fileName?: string) => void;
@@ -79,7 +95,6 @@ interface BackendTranscriptPart {
   is_final: boolean;
   speaker?: number | null;
   language?: string | null;
-  translation_status?: "original" | "translation";
   start_ms?: number | null;
   end_ms?: number | null;
   confidence?: number | null;
@@ -100,6 +115,14 @@ const initializeProviderOutputs = (
     return acc;
   }, {} as ProviderOutputs);
 };
+
+const initializeProviderTimings = (
+  providers: ProviderName[]
+): ProviderTimings =>
+  providers.reduce((acc, provider) => {
+    acc[provider] = { firstTokenAt: null, lastTokenAt: null };
+    return acc;
+  }, {} as ProviderTimings);
 
 const ComparisonContext = createContext<ComparisonContextType | undefined>(
   undefined
@@ -128,6 +151,9 @@ export const ComparisonProvider = ({
     useState<AudioRecordingState>("idle");
   const [providerOutputs, setProviderOutputs] = useState<ProviderOutputs>(() =>
     initializeProviderOutputs(providers)
+  );
+  const [providerTimings, setProviderTimings] = useState<ProviderTimings>(() =>
+    initializeProviderTimings(providers)
   );
   const [appError, setAppError] = useState<string | null>(null);
   const [rawMessages, setRawMessages] = useState<RawMessage[]>([]);
@@ -185,6 +211,7 @@ export const ComparisonProvider = ({
         return acc;
       }, {} as ProviderOutputs)
     );
+    setProviderTimings(initializeProviderTimings(providers));
     setAppError(null);
   };
 
@@ -196,6 +223,7 @@ export const ComparisonProvider = ({
     setRecordingState("stopping");
 
     if (audioRef.current) {
+      audioRef.current.onended = null;
       audioRef.current.pause();
     }
     if (streamRef.current) {
@@ -229,20 +257,32 @@ export const ComparisonProvider = ({
     }
 
     if (wsRef.current) {
-      if (wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send("END");
-      }
-      wsRef.current.onclose = null;
-      wsRef.current.onerror = null;
-      wsRef.current.onmessage = null;
-      wsRef.current.onopen = null;
-      if (
-        wsRef.current.readyState !== WebSocket.CLOSING &&
-        wsRef.current.readyState !== WebSocket.CLOSED
-      ) {
-        wsRef.current.close();
-      }
+      const ws = wsRef.current;
       wsRef.current = null;
+
+      // Detach lifecycle handlers immediately, but keep `onmessage` so we can
+      // still receive transcripts that providers flush in response to "END".
+      ws.onclose = null;
+      ws.onerror = null;
+      ws.onopen = null;
+
+      const closeSocket = () => {
+        ws.onmessage = null;
+        if (
+          ws.readyState !== WebSocket.CLOSING &&
+          ws.readyState !== WebSocket.CLOSED
+        ) {
+          ws.close();
+        }
+      };
+
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send("END");
+        // Give providers a moment to flush their final transcript, then close.
+        setTimeout(closeSocket, WS_DRAIN_MS);
+      } else {
+        closeSocket();
+      }
     }
 
     // Clear out the statusMessages from the providerOutputs (so we dont show "Recording..." when we stop)
@@ -294,6 +334,21 @@ export const ComparisonProvider = ({
       setAudioReady(true);
     };
 
+    // When previewing (i.e. not running a transcription session), tear down the
+    // audible analyser -> destination path once playback stops so it can't
+    // double up when a real session starts later.
+    const teardownPreviewOutput = () => {
+      if (recordingStateRef.current === "idle" && analyserRef.current) {
+        try {
+          analyserRef.current.disconnect();
+        } catch (e) {
+          console.warn("Error disconnecting analyser after preview:", e);
+        }
+      }
+    };
+    audio.addEventListener("pause", teardownPreviewOutput);
+    audio.addEventListener("ended", teardownPreviewOutput);
+
     audioRef.current = audio;
 
     if (audioUrl.startsWith("blob:")) {
@@ -337,6 +392,40 @@ export const ComparisonProvider = ({
     }
   };
 
+  // Locally play/pause the selected audio file as a preview, without opening a
+  // websocket or starting a transcription session.
+  const togglePreview = useCallback(async () => {
+    const audio = audioRef.current;
+    const context = fileAudioContextRef.current;
+    const source = fileSourceNodeRef.current;
+    const analyser = analyserRef.current;
+
+    if (!audio || !context || !source || !analyser) return;
+    // Ignore preview toggles while a real session is active.
+    if (recordingStateRef.current !== "idle") return;
+
+    if (!audio.paused) {
+      audio.pause();
+      return;
+    }
+
+    try {
+      // MediaElementSource diverts the audio away from the speakers, so route
+      // source -> analyser -> destination to make the preview audible.
+      source.disconnect();
+      source.connect(analyser);
+      analyser.disconnect();
+      analyser.connect(context.destination);
+
+      if (context.state === "suspended") {
+        await context.resume();
+      }
+      await audio.play();
+    } catch (err) {
+      console.error("Audio preview failed:", err);
+    }
+  }, []);
+
   const startRecording = useCallback(async () => {
     if (recordingState !== "idle") {
       console.warn("Recording already in progress or starting/stopping.");
@@ -351,6 +440,7 @@ export const ComparisonProvider = ({
     ];
     activeProvidersRef.current = currentProviders;
     resetProviderOutputs(currentProviders);
+    setProviderTimings(initializeProviderTimings([...ALL_PROVIDERS_LIST]));
 
     setProviderOutputs((prev) => {
       const newState = { ...prev };
@@ -448,6 +538,8 @@ export const ComparisonProvider = ({
         processorNodeRef.current.connect(context.destination);
 
         if (audioRef.current && analyserRef.current) {
+          // Reset first so a leftover preview connection can't double the output.
+          analyserRef.current.disconnect();
           analyserRef.current.connect(context.destination);
         }
 
@@ -476,6 +568,17 @@ export const ComparisonProvider = ({
 
         if (audioRef.current) {
           audioRef.current.currentTime = 0;
+          // When the file finishes playing, end the session just like pressing
+          // Stop (flush providers, close socket, return to idle) so the UI does
+          // not stay stuck in the "recording" state.
+          audioRef.current.onended = () => {
+            if (
+              recordingStateRef.current !== "idle" &&
+              recordingStateRef.current !== "stopping"
+            ) {
+              stopRecordingInternal();
+            }
+          };
           audioRef.current.play();
         }
       };
@@ -533,7 +636,6 @@ export const ComparisonProvider = ({
                   text: backendPart.text,
                   speaker: backendPart.speaker,
                   language: backendPart.language,
-                  translation_status: backendPart.translation_status,
                   start_ms: backendPart.start_ms,
                   end_ms: backendPart.end_ms,
                   confidence: backendPart.confidence,
@@ -554,6 +656,31 @@ export const ComparisonProvider = ({
           newOutputs[provider] = currentProviderOutput;
           return newOutputs;
         });
+
+        // Mark the provider's active window for cost estimation. Any message
+        // carrying transcript parts counts as a token; the first one starts the
+        // meter and every subsequent one extends it to the latest token.
+        const hasTokens =
+          result.type !== "info" &&
+          !result.error_message &&
+          Array.isArray(result.parts) &&
+          result.parts.length > 0;
+        if (hasTokens && provider) {
+          const now = Date.now();
+          setProviderTimings((prev) => {
+            const existing = prev[provider] ?? {
+              firstTokenAt: null,
+              lastTokenAt: null,
+            };
+            return {
+              ...prev,
+              [provider]: {
+                firstTokenAt: existing.firstTokenAt ?? now,
+                lastTokenAt: now,
+              },
+            };
+          });
+        }
       };
 
       wsRef.current.onerror = () => setAppError("WebSocket connection error.");
@@ -600,10 +727,12 @@ export const ComparisonProvider = ({
   const contextValue: ComparisonContextType = {
     recordingState,
     providerOutputs,
+    providerTimings,
     appError,
     rawMessages,
     startRecording,
     stopRecording,
+    togglePreview,
     clearTranscriptOutputs,
     clearRawMessages,
     setAudio,

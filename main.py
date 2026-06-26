@@ -1,5 +1,4 @@
 import asyncio
-import importlib
 import os
 from typing import Dict, List, Any
 
@@ -10,7 +9,11 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
-from config import get_provider_config, get_soniox_service_config
+from config import (
+    get_provider_config,
+    get_soniox_service_config,
+    get_language_support,
+)
 from providers.base_provider import BaseProvider
 from utils import error_message
 
@@ -21,29 +24,44 @@ from providers.google.provider import GoogleProvider
 from providers.azure.provider import AzureProvider
 from providers.speechmatics.provider import SpeechmaticsProvider
 from providers.openai.provider import OpenaiProvider
+from providers.cartesia.provider import CartesiaProvider
+from providers.elevenlabs.provider import ElevenlabsProvider
 
-from providers.config import ProviderParams, TranslationConfig, OperationMode
+from providers.config import ProviderParams
 
-PROVIDERS = [
-    SonioxProvider,
-    OpenaiProvider,
-    DeepgramProvider,
-    AssemblyProvider,
-    GoogleProvider,
-    AzureProvider,
-    SpeechmaticsProvider,
-]
+PROVIDER_MAP: Dict[str, type[BaseProvider]] = {
+    "soniox": SonioxProvider,
+    "openai": OpenaiProvider,
+    "deepgram": DeepgramProvider,
+    "assembly": AssemblyProvider,
+    "google": GoogleProvider,
+    "azure": AzureProvider,
+    "speechmatics": SpeechmaticsProvider,
+    "cartesia": CartesiaProvider,
+    "elevenlabs": ElevenlabsProvider,
+}
 
 load_dotenv()
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
+app.mount(
+    "/compare/ui", StaticFiles(directory="frontend/dist", html=True), name="compare-ui"
+)
 
-@app.get("/compare/ui", response_class=HTMLResponse)
-@app.get("/compare/ui/", response_class=HTMLResponse)
-async def index(request: Request):
-    return FileResponse("frontend/dist/index.html")
+
+@app.middleware("http")
+async def set_static_cache_headers(request: Request, call_next):
+    """Control browser caching of the served frontend."""
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/compare/ui"):
+        if "/assets/" in path:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.get("/compare/api/old", response_class=HTMLResponse)
@@ -51,17 +69,11 @@ async def old(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
-YIELD_DELAY_S = 0
-
-
 @app.websocket("/compare/api/compare-websocket")
 async def compare_websocket(
     websocket: WebSocket,
     # Parameters from useUrlSettings.ts
     providers: List[str] = Query(default=[], description="List of active providers"),
-    mode: OperationMode = Query(
-        default="stt", description="Mode of operation (stt/mt)"
-    ),
     language_hints: List[str] = Query(
         default=[], description="Hints for input languages"
     ),
@@ -75,21 +87,6 @@ async def compare_websocket(
     enable_endpoint_detection: bool = Query(
         default=False, description="Enable endpoint detection"
     ),
-    translation_target_language: str = Query(
-        default="", description="Target language for translation"
-    ),
-    translation_source_languages: List[str] = Query(
-        default=[], description="Source languages for translation"
-    ),
-    translation_language_a: str = Query(
-        default=None, description="Language A for two_way translation"
-    ),
-    translation_language_b: str = Query(
-        default=None, description="Language B for two_way translation"
-    ),
-    translation_type: str = Query(
-        default="one_way", description="Type of translation (one_way/two_way)"
-    ),
 ):
     await websocket.accept()
 
@@ -97,24 +94,12 @@ async def compare_websocket(
     receive_tasks = {}
 
     try:
-        translation_cfg = None
-        if mode == "mt":
-            translation_cfg = TranslationConfig(
-                target_language=translation_target_language,
-                source_languages=translation_source_languages,
-                language_a=translation_language_a,
-                language_b=translation_language_b,
-                type=translation_type,
-            )
-
         provider_params = ProviderParams(
-            mode=mode,
             language_hints=language_hints,
             context=context,
             enable_speaker_diarization=enable_speaker_diarization,
             enable_language_identification=enable_language_identification,
             enable_endpoint_detection=enable_endpoint_detection,
-            translation=translation_cfg if mode == "mt" else None,
         )
 
         # --- BEGIN DEBUG PRINT ---
@@ -126,8 +111,9 @@ async def compare_websocket(
         # Load providers
         for name in providers:
             try:
-                module = importlib.import_module(f"providers.{name}.provider")
-                provider_class = getattr(module, f"{name.capitalize()}Provider")
+                provider_class = PROVIDER_MAP.get(name)
+                if provider_class is None:
+                    raise ValueError(f"Unknown provider: {name}")
 
                 provider_config = get_provider_config(
                     name=name,
@@ -154,8 +140,9 @@ async def compare_websocket(
                             message["provider"] = provider_name
                             await websocket.send_json(message)
                         else:
-                            print(f"Warning: Received a None message from {provider_name}. Skipping.")
-                    await asyncio.sleep(YIELD_DELAY_S)
+                            print(
+                                f"Warning: Received a None message from {provider_name}. Skipping."
+                            )
             except Exception as e:
                 await websocket.send_json(
                     error_message(provider=provider_name, message=f"Receive error: {e}")
@@ -229,11 +216,19 @@ async def compare_websocket(
 async def get_providers():
     all_features: Dict[str, Any] = {}
 
-    for provider_class in PROVIDERS:
-        provider_features = provider_class.get_available_features()
-        key_name = provider_class.__name__.replace("Provider", "").lower()
-        all_features[key_name] = provider_features
+    for name, provider_class in PROVIDER_MAP.items():
+        all_features[name] = provider_class.get_available_features()
     return all_features
+
+
+@app.get("/compare/api/language-support", response_model=Dict[str, List[str]])
+async def get_providers_language_support():
+    """Per-provider lists of supported input-language codes (ISO-639-1).
+
+    Used by the language selector to show which providers support each language.
+    Soniox is omitted because the rendered language list is its own model list.
+    """
+    return get_language_support()
 
 
 @app.get("/compare/api/soniox-model", response_model=Dict[str, Any])
@@ -248,7 +243,7 @@ async def get_soniox_model():
             resp.raise_for_status()
             models = await resp.json()
             for model in models["models"]:
-                if model["id"] == "stt-rt-preview":
+                if model["id"] == "stt-rt-v5":
                     return model
             raise Exception("Model not found")
 
@@ -261,7 +256,3 @@ def health() -> str:
 @app.get("/.well-known/version/soniox-compare", response_class=PlainTextResponse)
 def version() -> str:
     return os.getenv("VERSION", "")
-
-
-if os.path.exists("frontend/dist"):
-    app.mount("/compare/ui", StaticFiles(directory="frontend/dist"), name="static")

@@ -1,9 +1,9 @@
 import { ComparisonProvider } from "@/contexts/comparison-context";
 import { MainLayout } from "@/components/main-layout";
-import { ControlPanel } from "@/components/sidebar/control-panel";
+import { FooterControls } from "@/components/footer-controls";
+import { HeaderControls } from "@/components/header-controls";
 import { ProviderGrid } from "@/components/provider-grid";
 import { ModelDataProvider } from "@/contexts/model-data-context";
-import { FeatureComparisonTable } from "@/components/feature-comparison-table";
 import { FeatureProvider, useFeatures } from "@/contexts/feature-context";
 
 function App() {
@@ -46,9 +46,9 @@ function AppCore() {
     <ModelDataProvider>
       <ComparisonProvider>
         <MainLayout
-          sidebarContent={<ControlPanel />}
           mainContent={<ProviderGrid />}
-          featureTableContent={<FeatureComparisonTable />}
+          footerContent={<FooterControls />}
+          headerControlsContent={<HeaderControls />}
         />
       </ComparisonProvider>
     </ModelDataProvider>

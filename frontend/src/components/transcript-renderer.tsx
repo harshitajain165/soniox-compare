@@ -58,7 +58,6 @@ export const TranscriptRenderer: React.FC<TranscriptRendererProps> = ({
     isFinalStyling: boolean,
     previousPartSpeaker?: number | string | null,
     previousPartLanguage?: string | null,
-    previousPartTranslationStatus?: string | null,
     keyPrefix?: string
   ) => {
     const elementsArray: React.ReactNode[] = [];
@@ -66,7 +65,6 @@ export const TranscriptRenderer: React.FC<TranscriptRendererProps> = ({
     parts.forEach((part, index) => {
       const partSpeaker = part.speaker || null;
       const partLanguage = part.language || null;
-      const partTranslationStatus = part.translation_status || null;
 
       let displaySpeakerName = false;
       let displayLanguageTag = false;
@@ -123,24 +121,17 @@ export const TranscriptRenderer: React.FC<TranscriptRendererProps> = ({
             !displaySpeakerName &&
             Boolean(previousPartLanguage)
           }
-          addSpacing={
-            partTranslationStatus !== previousPartTranslationStatus &&
-            previousPartTranslationStatus === "translation" &&
-            !displaySpeakerName
-          }
         />
       );
 
       previousPartSpeaker = partSpeaker;
       previousPartLanguage = partLanguage;
-      previousPartTranslationStatus = partTranslationStatus;
     });
 
     return {
       elements: elementsArray,
       newLastSpeaker: previousPartSpeaker,
       newLastLanguage: previousPartLanguage,
-      newLastTranslationStatus: previousPartTranslationStatus,
     };
   };
 
@@ -160,7 +151,6 @@ export const TranscriptRenderer: React.FC<TranscriptRendererProps> = ({
       true,
       undefined,
       undefined,
-      undefined,
       "final"
     );
     let combinedElements: React.ReactNode[] = [...finalRender.elements];
@@ -171,7 +161,6 @@ export const TranscriptRenderer: React.FC<TranscriptRendererProps> = ({
         false,
         finalRender.newLastSpeaker,
         finalRender.newLastLanguage,
-        finalRender.newLastTranslationStatus,
         "nonfinal"
       );
       combinedElements = [...combinedElements, ...nonFinalRender.elements];
@@ -246,7 +235,6 @@ interface WordTokenProps {
   textToRender: string;
   displayedLanguage: string | null;
   onNewLine: boolean;
-  addSpacing: boolean;
 }
 
 const WordToken = memo(
@@ -256,38 +244,18 @@ const WordToken = memo(
     textToRender,
     displayedLanguage,
     onNewLine,
-    addSpacing,
   }: WordTokenProps) => {
     // --- 1. Special rendering for <end> tag ---
     if (part.text.trim() === "<end>") {
-      const endTooltipParts: string[] = [];
-      if (part.start_ms !== undefined && part.start_ms !== null) {
-        endTooltipParts.push(
-          `Endpoint detected at: ${formatTime(part.start_ms)}`
-        );
-      }
-
       return (
-        <ResponsiveTooltip
-          content={
-            endTooltipParts.length > 0 && (
-              <>
-                {endTooltipParts.map((info, idx) => (
-                  <p key={idx}>{info}</p>
-                ))}
-              </>
-            )
-          }
+        <span
+          className={cn(
+            "px-2 py-1 text-gray-700 rounded-lg text-[10px] font-semibold tracking-wider",
+            isFinalStyling ? "opacity-50" : "opacity-60"
+          )}
         >
-          <span
-            className={cn(
-              "px-2 py-1 text-gray-700 rounded-lg text-[10px] font-semibold tracking-wider",
-              isFinalStyling ? "opacity-50" : "opacity-60"
-            )}
-          >
-            {`<end>`}
-          </span>
-        </ResponsiveTooltip>
+          {`<end>`}
+        </span>
       );
     }
 
@@ -307,7 +275,6 @@ const WordToken = memo(
     const languageTag = displayedLanguage ? (
       <>
         {onNewLine && <br />}
-        {addSpacing && <div className="h-3" />}
         <span className="px-2 mr-0.5 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-400 rounded-full text-xs font-medium">
           {new Intl.DisplayNames(["en"], { type: "language" }).of(
             displayedLanguage
@@ -331,12 +298,7 @@ const WordToken = memo(
           }
         >
           <span
-            className={cn(
-              textClassName,
-              part.translation_status === "translation" &&
-                "text-gray-400 dark:text-gray-500 text-sm italic",
-              "hover:text-soniox rounded-lg"
-            )}
+            className={cn(textClassName, "hover:text-soniox rounded-lg")}
           >
             {textToRender}
           </span>

@@ -7,9 +7,9 @@ from providers.base_provider import (
 )
 from providers.config import ProviderConfig, SupportedFeatures, FeatureStatus
 from utils import make_part
-from typing import Any, Optional
+from typing import Any
 
-from config import get_translation_language_mapping, get_language_mapping
+from config import get_language_mapping
 
 
 class SpeechmaticsProvider(BaseProvider):
@@ -37,13 +37,6 @@ class SpeechmaticsProvider(BaseProvider):
                 "Speechmatics only supports language identification in batch, not streaming."
                 "\n[Click here for more info](https://docs.speechmatics.com/features-other/lang-id)"
             )
-        if self.config.params.mode == "mt":
-            translation = self.config.params.translation
-            self._session_target_language = translation.target_language.replace(
-                "zh", "cmn"
-            )
-        else:
-            self._session_target_language = None
         try:
             self.error = None
             headers = {"Authorization": f"Bearer {self.config.service.api_key}"}
@@ -71,17 +64,7 @@ class SpeechmaticsProvider(BaseProvider):
             raise ProviderError(f"{ex}")
 
     def _determine_language(self) -> str:
-        """Choose appropriate language based on mode (STT or MT)."""
-
-        if self.config.params.mode == "mt":
-            translation = self.config.params.translation
-            if not translation:
-                raise ProviderError("Got mt mode, but translation config is None.")
-            if len(translation.source_languages) != 1:
-                raise ProviderError(
-                    "Speechmatics supports only one source language for translation."
-                )
-            return translation.source_languages[0]
+        """Choose appropriate transcription language."""
 
         if not self.config.params.language_hints:
             raise ProviderError(
@@ -114,32 +97,6 @@ class SpeechmaticsProvider(BaseProvider):
             "transcription_config": transcription,
         }
 
-        if self.config.params.mode == "mt":
-            translation = self.config.params.translation
-            assert translation is not None
-            self._language_pairs = get_translation_language_mapping("speechmatics")
-
-            # Normalize Chinese language code
-            translation.source_languages[0] = translation.source_languages[0].replace(
-                "zh", "cmn"
-            )
-            translation.target_language = translation.target_language.replace(
-                "zh", "cmn"
-            )
-
-            if not self.is_language_pair_supported(
-                translation.source_languages, translation.target_language
-            ):
-                raise ProviderError(
-                    f"Unsupported language pair: {translation.source_languages[0]} -> {translation.target_language}."
-                    "\n[Click here to see available languages.](https://docs.speechmatics.com/introduction/supported-languages)"
-                )
-
-            msg["translation_config"] = {
-                "target_languages": [translation.target_language],
-                "enable_partials": True,
-            }
-
         return msg
 
     async def disconnect(self) -> None:
@@ -167,9 +124,13 @@ class SpeechmaticsProvider(BaseProvider):
         self.client_queue.put_nowait(json.dumps(end_msg))
 
     async def receive(self) -> list[dict[str, Any]]:
-        items = []
+        try:
+            first = await asyncio.wait_for(self.host_queue.get(), timeout=0.1)
+        except asyncio.TimeoutError:
+            return []
+        items = [first]
         while not self.host_queue.empty():
-            items.append(await self.host_queue.get())
+            items.append(self.host_queue.get_nowait())
         return items
 
     async def _send_loop(self):
@@ -189,9 +150,8 @@ class SpeechmaticsProvider(BaseProvider):
         try:
             async for resp in self.websocket:
                 data = json.loads(resp)
-                # Parse transcripts & translations accordingly
                 msg_type = data.get("message")
-                if self.config.params.mode == "stt" and msg_type in (
+                if msg_type in (
                     "AddPartialTranscript",
                     "AddTranscript",
                 ):
@@ -243,49 +203,10 @@ class SpeechmaticsProvider(BaseProvider):
                             }
                         )
 
-                elif self.config.params.mode == "mt" and msg_type in (
-                    "AddPartialTranslation",
-                    "AddTranslation",
-                ):
-                    translations = data.get("results", [])
-                    is_final = msg_type == "AddTranslation"
-
-                    parts = []
-
-                    for translation in translations:
-                        content = translation.get("content")
-                        speaker = None
-                        start_time_s = translation.get("start_time")
-                        end_time_s = translation.get("end_time")
-                        if msg_type == "AddTranslation":
-                            if translation.get("speaker") is not None:
-                                speaker = translation.get("speaker")[-1]
-
-                        assert isinstance(content, str)
-                        content = content.strip()
-
-                        if is_final:
-                            content += " "
-                        parts.append(
-                            make_part(
-                                text=content,
-                                is_final=is_final,
-                                speaker=speaker,
-                                start_ms=start_time_s * 1000,
-                                end_ms=end_time_s * 1000,
-                                language=self._session_target_language,
-                            )
-                        )
-                    if len(parts) > 0:
-                        await self.host_queue.put(
-                            {
-                                "type": "data",
-                                "provider": self.config.service.provider_name,
-                                "parts": parts,
-                            }
-                        )
-                elif msg_type == "error":
-                    await self._error(data.get("error", "Unknown error"))
+                elif msg_type == "Error":
+                    err_type = data.get("type") or "unknown_error"
+                    reason = data.get("reason") or "Unknown error"
+                    await self._error(f"Speechmatics [{err_type}]: {reason}")
         except Exception as ex:
             self.error = ex
             await self._error(ex)
@@ -299,16 +220,6 @@ class SpeechmaticsProvider(BaseProvider):
             }
         )
         await self.disconnect()
-
-    def is_language_pair_supported(
-        self, source_langs: Optional[list[str]], target_lang: str
-    ) -> bool:
-        if not source_langs or not target_lang:
-            return False
-        for src in source_langs:
-            if target_lang in self._language_pairs.get(src, []):
-                return True
-        return False
 
     @staticmethod
     def get_available_features():
@@ -326,8 +237,6 @@ class SpeechmaticsProvider(BaseProvider):
             customization=supported,  # https://docs.speechmatics.com/features/custom-dictionary
             timestamps=supported,  # https://docs.speechmatics.com/features-other/word-alignment
             confidence_scores=supported,  # https://docs.speechmatics.com/features/entities#example-transcription-output
-            translation_one_way=supported,  # https://docs.speechmatics.com/features-other/translation
-            translation_two_way=unsupported,
             real_time_latency_config=supported,  # https://docs.speechmatics.com/features/realtime-latency
             endpoint_detection=unsupported,  # True previously, but could not find this feature.
             manual_finalization=unsupported,

@@ -42,6 +42,7 @@ interface SearchSelectProps {
   disabled?: boolean;
   className?: string;
   highlightedValues?: string[];
+  pinnedValues?: string[];
 }
 
 export const SearchSelect: React.FC<SearchSelectProps> = ({
@@ -54,6 +55,7 @@ export const SearchSelect: React.FC<SearchSelectProps> = ({
   disabled = false,
   className,
   highlightedValues = [],
+  pinnedValues = [],
 }) => {
   const [open, setOpen] = React.useState(false);
   const isMobile = useIsMobile();
@@ -69,17 +71,30 @@ export const SearchSelect: React.FC<SearchSelectProps> = ({
     return 0; // No match
   };
 
+  // Pinned options are always shown first (after the selected one), in the
+  // order given by `pinnedValues`, and excluded from the sorted groups below.
+  const pinnedOptions = pinnedValues
+    .map((pinnedValue) => options.find((option) => option.value === pinnedValue))
+    .filter(
+      (option): option is SearchSelectOption =>
+        !!option && option.value !== value
+    );
+
   const highlightedOptions = options
     .filter(
       (option) =>
-        highlightedValues.includes(option.value) && option.value !== value
+        highlightedValues.includes(option.value) &&
+        !pinnedValues.includes(option.value) &&
+        option.value !== value
     )
     .sort((a, b) => a.label.localeCompare(b.label));
 
   const otherOptions = options
     .filter(
       (option) =>
-        !highlightedValues.includes(option.value) && option.value !== value
+        !highlightedValues.includes(option.value) &&
+        !pinnedValues.includes(option.value) &&
+        option.value !== value
     )
     .sort((a, b) => a.label.localeCompare(b.label));
 
@@ -110,8 +125,11 @@ export const SearchSelect: React.FC<SearchSelectProps> = ({
 
   const commandContent = (
     <>
-      {selectedOption && (
-        <CommandGroup>{renderOption(selectedOption)}</CommandGroup>
+      {(selectedOption || pinnedOptions.length > 0) && (
+        <CommandGroup>
+          {selectedOption && renderOption(selectedOption)}
+          {pinnedOptions.map(renderOption)}
+        </CommandGroup>
       )}
       {highlightedOptions.length > 0 && (
         <CommandGroup heading="Suggested">
@@ -136,9 +154,11 @@ export const SearchSelect: React.FC<SearchSelectProps> = ({
       className={cn("w-full justify-between", className)}
       disabled={disabled}
     >
-      {selectedOption
-        ? stripOutLeadingUnderscore(selectedOption.label)
-        : placeholder}
+      <span className="min-w-0 flex-1 truncate text-left">
+        {selectedOption
+          ? stripOutLeadingUnderscore(selectedOption.label)
+          : placeholder}
+      </span>
       <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
     </Button>
   );

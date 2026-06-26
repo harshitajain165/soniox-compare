@@ -1,154 +1,49 @@
-import React, { useState, useEffect } from "react";
-import { Menu } from "lucide-react";
-import { cn } from "@/lib/utils";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
-import { Button } from "./ui/button";
-import { BottomNavbar } from "./bottom-navbar";
-import { useComparison } from "@/contexts/comparison-context";
-import { useSwipe } from "@/hooks/use-swipe";
+import React from "react";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 interface MainLayoutProps {
-  sidebarContent: React.ReactNode;
   mainContent: React.ReactNode;
-  featureTableContent?: React.ReactNode;
+  footerContent?: React.ReactNode;
+  headerControlsContent?: React.ReactNode;
 }
 
 export const MainLayout: React.FC<MainLayoutProps> = ({
-  sidebarContent,
   mainContent,
-  featureTableContent,
+  footerContent,
+  headerControlsContent,
 }) => {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [activeView, setActiveView] = useState<"main" | "features">("main");
-  const { recordingState, stopRecording } = useComparison();
-
-  const swipeHandlers = useSwipe({
-    onSwipeRight: () => {
-      // Open sidebar with a swipe from the left edge of the screen
-      if (activeView === "main" && !isSidebarOpen) {
-        setIsSidebarOpen(true);
-      }
-    },
-  });
-
   return (
-    <div
-      {...swipeHandlers}
-      style={{ touchAction: "pan-y" }}
-      className="w-full h-dvh flex flex-row font-sans antialiased bg-white dark:bg-gray-950 text-gray-800 dark:text-gray-200 overflow-hidden"
-    >
-      <Sidebar isSheetOpen={isSidebarOpen} setIsSheetOpen={setIsSidebarOpen}>
-        {sidebarContent}
-      </Sidebar>
+    <div className="w-full h-dvh flex flex-col font-sans antialiased bg-white dark:bg-gray-950 text-gray-800 dark:text-gray-200 overflow-hidden">
+      <Header controls={headerControlsContent} />
 
-      {/* Main content area */}
-      <main className="flex-grow relative h-dvh flex flex-col">
-        {/* Conditionally render the active view */}
-        <div className="w-full flex-1">
-          {activeView === "main" ? mainContent : featureTableContent}
-        </div>
+      <div className="flex flex-row flex-1 min-h-0">
+        <main className="flex-grow relative flex flex-col min-h-0">
+          <div className="w-full flex-1 min-h-0">{mainContent}</div>
+        </main>
+      </div>
 
-        {/* Desktop FAB */}
-        {/* Feature table moved to dialog (triggered from sidebar), 
-        could reuse this for something else maybe */}
-        {/* <div className="fixed bottom-6 right-6 hidden md:flex flex-col items-center gap-3 z-50">
-          <button
-            onClick={() =>
-              setActiveView(activeView === "main" ? "features" : "main")
-            }
-            className="p-3 cursor-pointer rounded-full bg-gray-400/50 text-white hover:bg-black/60 backdrop-blur-xs transition-all duration-200"
-            aria-label="Switch view"
-          >
-            {activeView === "main" ? <ListChecks size={24} /> : <X size={24} />}
-          </button>
-        </div> */}
-
-        {/* Mobile Bottom Navbar */}
-        <BottomNavbar
-          activeView={activeView}
-          setActiveView={setActiveView}
-          onOpenSettings={() => setIsSidebarOpen(true)}
-          recordingState={recordingState}
-          stopRecording={stopRecording}
-        />
-      </main>
+      {footerContent && (
+        <footer className="shrink-0 flex items-center gap-3 min-h-16 px-4 py-3 border-t border-gray-200 bg-zinc-50 dark:border-gray-800 dark:bg-gray-900">
+          {footerContent}
+        </footer>
+      )}
     </div>
   );
 };
 
-interface SidebarProps {
-  children: React.ReactNode;
-  isSheetOpen: boolean;
-  setIsSheetOpen: (isOpen: boolean) => void;
-}
-const Sidebar: React.FC<SidebarProps> = ({
-  children,
-  isSheetOpen,
-  setIsSheetOpen,
-}) => {
-  const [shouldAnimate, setShouldAnimate] = useState(true);
-
-  // This effect is used to prevent the sheet from animating when the window is resized and it automatically closes.
-  useEffect(() => {
-    const handleResize = () => {
-      if (window.innerWidth >= 1024) {
-        // Tailwind's default lg breakpoint
-        setShouldAnimate(false);
-        setIsSheetOpen(false);
-        setTimeout(() => {
-          setShouldAnimate(true);
-        }, 100);
-      }
-    };
-    window.addEventListener("resize", handleResize);
-    handleResize(); // Initial check
-    return () => window.removeEventListener("resize", handleResize);
-  }, [setIsSheetOpen]);
-
+const Header: React.FC<{ controls?: React.ReactNode }> = ({ controls }) => {
   return (
-    <>
-      {/* Static Sidebar for larger screens */}
-      <aside
-        className={cn(
-          "sticky shrink-0 top-0 h-screen w-72 flex-col border-r border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900",
-          "hidden lg:flex" // Always apply these for the static version
-        )}
-      >
-        {children}
-      </aside>
-
-      {/* Hamburger menu and Sheet for smaller screens */}
-      <div className="hidden md:flex lg:hidden absolute top-3 left-0 z-20">
-        <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
-          <SheetTitle hidden>Control Panel</SheetTitle>
-          <SheetTrigger asChild>
-            <Button
-              variant="outline"
-              className="translate-x-3"
-              size="icon"
-              aria-label="Clear transcripts"
-            >
-              <Menu className="w-4 h-4" />
-            </Button>
-          </SheetTrigger>
-          <SheetContent
-            side="left"
-            className={cn("w-72 p-0", !shouldAnimate && "!duration-0")}
-            showCloseButton={false} // Assuming this prop exists as per your previous changes
-          >
-            <SheetDescription hidden>
-              Settings for the comparison
-            </SheetDescription>
-            {children}
-          </SheetContent>
-        </Sheet>
+    <header className="shrink-0 flex items-center justify-between gap-2 h-14 px-4 border-b border-gray-200 bg-zinc-50 dark:border-gray-800 dark:bg-gray-900">
+      <div className="flex items-center gap-2">
+        <img
+          src="/compare/ui/soniox-compare.svg"
+          alt="Soniox Compare Logo"
+          className="h-6"
+        />
       </div>
-    </>
+      <TooltipProvider>
+        <div className="flex items-center gap-3">{controls}</div>
+      </TooltipProvider>
+    </header>
   );
 };

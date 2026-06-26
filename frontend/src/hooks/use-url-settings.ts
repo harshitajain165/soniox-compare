@@ -11,36 +11,19 @@ import {
   SONIOX_PROVIDER,
   type ProviderName,
 } from "@/lib/provider-features";
-import { useMemo } from "react";
-
-export type TranslationType = "one_way" | "two_way";
-
-export const OPERATION_MODES = [
-  { value: "stt" as "stt" | "mt", label: "Speech-to-Text" },
-  { value: "mt" as "stt" | "mt", label: "Speech Translation" },
-];
 
 export interface UrlSettings {
-  mode: "stt" | "mt";
   languageHints: string[];
   context: string;
-  targetTranslationLanguage: string;
-  sourceTranslationLanguages: string[];
   selectedProviders: ProviderName[];
   enableSpeakerDiarization: boolean;
   enableLanguageIdentification: boolean;
   enableEndpointDetection: boolean;
-  translationType: TranslationType;
   selectedFileName: string | null;
 }
 
-const defaultMode = OPERATION_MODES[0].value;
 const defaultLanguageHints: string[] = ["en"];
 const defaultContext: string = "";
-const defaultTargetTranslationLanguage = "es";
-const defaultSourceTranslationLanguages: string[] = ["en"];
-const defaultTranslationLanguageA = "en";
-const defaultTranslationLanguageB = "es";
 
 const initialComparisonProviders = ALL_PROVIDERS_LIST.filter(
   (p) => p !== SONIOX_PROVIDER
@@ -51,26 +34,13 @@ const defaultSelectedProviders: ProviderName[] = [
 const defaultEnableSpeakerDiarization = true;
 const defaultEnableLanguageIdentification = true;
 const defaultEnableEndpointDetection = false;
-const defaultTranslationType: TranslationType = "one_way";
-
-const modeLiterals = OPERATION_MODES.map((m) => m.value) as ReadonlyArray<
-  UrlSettings["mode"]
->;
 
 const providerLiterals = ALL_PROVIDERS_LIST as ReadonlyArray<ProviderName>;
-const translationTypeLiterals = ["one_way", "two_way"] as const;
 
 const settingParsers = {
-  mode: parseAsStringLiteral(modeLiterals).withDefault(defaultMode),
   languageHints:
     parseAsArrayOf(parseAsString).withDefault(defaultLanguageHints),
   context: parseAsString.withDefault(defaultContext),
-  targetTranslationLanguage: parseAsString.withDefault(
-    defaultTargetTranslationLanguage
-  ),
-  sourceTranslationLanguages: parseAsArrayOf(parseAsString).withDefault(
-    defaultSourceTranslationLanguages
-  ),
   selectedProviders: parseAsArrayOf(
     parseAsStringLiteral(providerLiterals)
   ).withDefault(defaultSelectedProviders),
@@ -83,11 +53,6 @@ const settingParsers = {
   enableEndpointDetection: parseAsBoolean.withDefault(
     defaultEnableEndpointDetection
   ),
-  translationType: parseAsStringLiteral(translationTypeLiterals).withDefault(
-    defaultTranslationType
-  ),
-  translationLanguageA: parseAsString.withDefault(defaultTranslationLanguageA),
-  translationLanguageB: parseAsString.withDefault(defaultTranslationLanguageB),
   selectedFileName: parseAsString,
 };
 
@@ -103,17 +68,14 @@ export function useUrlSettings() {
     const params = new URLSearchParams();
     if (!settings) return params.toString();
 
-    params.set("mode", settings.mode);
+    const hintsSet = new Set<string>();
+    (settings.languageHints || []).forEach((hint) => {
+      if (hint) hintsSet.add(hint);
+    });
 
-    if (
-      settings.mode !== "mt" &&
-      settings.languageHints &&
-      settings.languageHints.length > 0
-    ) {
-      settings.languageHints.forEach((hint) =>
-        params.append("language_hints", hint)
-      );
-    }
+    Array.from(hintsSet).forEach((hint) =>
+      params.append("language_hints", hint)
+    );
 
     params.set("context", settings.context || "");
     params.set(
@@ -129,29 +91,6 @@ export function useUrlSettings() {
       String(settings.enableEndpointDetection)
     );
 
-    if (settings.mode === "mt") {
-      params.set("translation_type", settings.translationType);
-      if (settings.translationType === "one_way") {
-        if (settings.targetTranslationLanguage) {
-          params.set(
-            "translation_target_language",
-            settings.targetTranslationLanguage
-          );
-        }
-        if (
-          settings.sourceTranslationLanguages &&
-          settings.sourceTranslationLanguages.length > 0
-        ) {
-          settings.sourceTranslationLanguages.forEach((lang) =>
-            params.append("translation_source_languages", lang)
-          );
-        }
-      } else if (settings.translationType === "two_way") {
-        params.set("translation_language_a", settings.translationLanguageA);
-        params.set("translation_language_b", settings.translationLanguageB);
-      }
-    }
-
     params.append("providers", "soniox");
     if (settings.selectedProviders && settings.selectedProviders.length > 0) {
       settings.selectedProviders.forEach((p) => params.append("providers", p));
@@ -160,32 +99,12 @@ export function useUrlSettings() {
     return params.toString();
   };
 
-  const isValid = useMemo(() => {
-    if (settings.mode === "mt") {
-      if (settings.translationType === "one_way") {
-        return (
-          settings.targetTranslationLanguage &&
-          settings.sourceTranslationLanguages.length > 0
-        );
-      } else if (settings.translationType === "two_way") {
-        return settings.translationLanguageA && settings.translationLanguageB;
-      }
-    }
-    return true;
-  }, [settings]);
-
   return {
     settings,
-    isValid,
     setSettings,
-    setMode: (mode: UrlSettings["mode"]) => setSettings({ mode }),
     setLanguageHints: (hints: string[]) =>
       setSettings({ languageHints: hints }),
     setContext: (text: string) => setSettings({ context: text }),
-    setTargetTranslationLanguage: (lang: string) =>
-      setSettings({ targetTranslationLanguage: lang }),
-    setSourceTranslationLanguages: (langs: string[]) =>
-      setSettings({ sourceTranslationLanguages: langs }),
     setSelectedProviders: (providers: ProviderName[]) =>
       setSettings({ selectedProviders: providers }),
     setEnableSpeakerDiarization: (enabled: boolean) =>
@@ -194,14 +113,8 @@ export function useUrlSettings() {
       setSettings({ enableLanguageIdentification: enabled }),
     setEnableEndpointDetection: (enabled: boolean) =>
       setSettings({ enableEndpointDetection: enabled }),
-    setTranslationType: (type: TranslationType) =>
-      setSettings({ translationType: type }),
     setSelectedFileName: (fileName: string | null) =>
       setSettings({ selectedFileName: fileName }),
     getSettingsAsUrlParams,
-    setTranslationLanguageA: (lang: string) =>
-      setSettings({ translationLanguageA: lang }),
-    setTranslationLanguageB: (lang: string) =>
-      setSettings({ translationLanguageB: lang }),
   };
 }

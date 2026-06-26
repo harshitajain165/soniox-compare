@@ -20,21 +20,17 @@ class DeepgramProvider(BaseProvider):
         self.host_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._sender: asyncio.Task[Any] | None = None
         self._receiver: asyncio.Task[Any] | None = None
-        self._first_word = True
 
     def get_lang_cfg(self) -> str:
-        language = "en"
-        lang_mapping = get_language_mapping("deepgram")
-        if len(self.config.params.language_hints) == 0:
-            language = "multi"
+        hints = self.config.params.language_hints
+        if len(hints) == 0:
+            return "multi"  # no hint → multilingual code-switching
 
-        for lang_hint in self.config.params.language_hints:
-            if lang_hint not in lang_mapping:
-                raise ProviderError(f"Language {lang_hint} not supported by Deepgram.")
-            elif lang_hint != "en":
-                language = "multi"
-                break
-        return language
+        lang_mapping = get_language_mapping("deepgram")
+        lang_hint = hints[0]
+        if lang_hint not in lang_mapping:
+            raise ProviderError(f"Language {lang_hint} not supported by Deepgram.")
+        return lang_mapping[lang_hint]
 
     async def connect(self) -> None:
         if self._is_connected:
@@ -79,7 +75,6 @@ class DeepgramProvider(BaseProvider):
                 "diarize": (
                     "true" if self.config.params.enable_speaker_diarization else "false"
                 ),
-                "utterances": "true",
                 "dictation": "true",
                 "numerals": "true",
                 "smart_format": "true",
@@ -122,14 +117,23 @@ class DeepgramProvider(BaseProvider):
             raise self.error
 
     async def send_end(self) -> None:
+        # Deepgram finalizes a live stream via the "CloseStream" control message.
+        # It makes the server flush any buffered audio, emit the final results
+        # (with is_final/speech_final set), send summary metadata, and then close.
+        # Without it, trailing interim words never get finalized.
+        # https://developers.deepgram.com/docs/close-stream
         if self.websocket:
-            end_msg = json.dumps({"type": "end"})
+            end_msg = json.dumps({"type": "CloseStream"})
             self.client_queue.put_nowait(end_msg)
 
     async def receive(self) -> list[dict[str, Any]]:
-        items = []
+        try:
+            first = await asyncio.wait_for(self.host_queue.get(), timeout=0.1)
+        except asyncio.TimeoutError:
+            return []
+        items = [first]
         while not self.host_queue.empty():
-            items.append(await self.host_queue.get())
+            items.append(self.host_queue.get_nowait())
         return items
 
     async def _send_loop(self):
@@ -158,33 +162,41 @@ class DeepgramProvider(BaseProvider):
                     is_final = data["is_final"]
                     if "words" in data_part:
                         words = data_part["words"]
+                        if self.config.params.enable_speaker_diarization and is_final:
+                            print(
+                                "[deepgram diarize debug] "
+                                f"is_final={is_final} "
+                                f"speakers={[w.get('speaker') for w in words]}"
+                            )
                         parts = []
                         speaker = None
+                        start_ms = None
+                        end_ms = None
                         for word in words:
                             if self.config.params.enable_speaker_diarization:
-                                speaker = word.get("speaker", "UNKNOWN")
-                                if speaker != "UNKNOWN":
-                                    speaker += 1
+                                raw_speaker = word.get("speaker")
+                                # Deepgram speakers are 0-indexed ints; expose them
+                                # 1-indexed and drop entries without a speaker.
+                                speaker = (
+                                    raw_speaker + 1 if raw_speaker is not None else None
+                                )
                             else:
                                 speaker = None
 
                             start_s = word.get("start")
-                            start_ms = int(start_s * 1000) if start_s is None else None
+                            start_ms = (
+                                int(start_s * 1000) if start_s is not None else None
+                            )
 
                             end_s = word.get("end")
-                            end_ms = int(end_s * 1000) if end_s is None else None
+                            end_ms = int(end_s * 1000) if end_s is not None else None
 
                             confidence = word.get("confidence")
-
-                            if self._first_word:
-                                text = word["punctuated_word"]
-                                self._first_word = False
-                            else:
-                                text = " " + word["punctuated_word"]
+                            text = word.get("punctuated_word") or word.get("word", "")
 
                             parts.append(
                                 make_part(
-                                    text=text,
+                                    text=text + " ",
                                     is_final=is_final,
                                     speaker=speaker,
                                     language=None,
@@ -193,10 +205,18 @@ class DeepgramProvider(BaseProvider):
                                     confidence=confidence,
                                 )
                             )
-                        if data.get("speech_final") is True:
+                        # Only emit an endpoint marker for endpoints detected during
+                        # live speech. The flush triggered by CloseStream/Finalize is
+                        # tagged with `from_finalize` and would otherwise add a
+                        # duplicate <end> at the very end of the stream.
+                        if (
+                            self.config.params.enable_endpoint_detection
+                            and data.get("speech_final") is True
+                            and not data.get("from_finalize")
+                        ):
                             parts.append(
                                 make_part(
-                                    text=" <end>",
+                                    text="<end>",
                                     is_final=True,
                                     speaker=speaker,
                                     language=None,
@@ -245,8 +265,6 @@ class DeepgramProvider(BaseProvider):
             customization=supported,  # available in form of Keyterm Prompting: https://developers.deepgram.com/docs/keyterm
             timestamps=supported,
             confidence_scores=supported,
-            translation_one_way=unsupported,
-            translation_two_way=unsupported,
             # Endpointing can affect the latency, but only when it actually detects
             # silence in audio stream. We set this to false.
             real_time_latency_config=unsupported,

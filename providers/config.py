@@ -1,8 +1,8 @@
+from typing import Any, Optional
+
 from pydantic import BaseModel, Field
 from enum import Enum
-from typing import Literal
 
-OperationMode = Literal["stt", "mt"]
 
 class FeatureState(Enum):
     SUPPORTED = "SUPPORTED"
@@ -32,13 +32,16 @@ class SupportedFeatures(BaseModel):
     model: str
     single_multilingual_model: FeatureStatus
     language_hints: FeatureStatus
+    # Max number of explicit language hints the provider's streaming API accepts.
+    # None = unlimited. When the request exceeds this, validate_capabilities falls
+    # back to auto-detection (if single_multilingual_model is supported) or keeps
+    # the first N hints otherwise.
+    max_language_hints: int | None = 1
     language_identification: FeatureStatus
     speaker_diarization: FeatureStatus
     customization: FeatureStatus
     timestamps: FeatureStatus
     confidence_scores: FeatureStatus
-    translation_one_way: FeatureStatus
-    translation_two_way: FeatureStatus
     real_time_latency_config: FeatureStatus
     endpoint_detection: FeatureStatus
     manual_finalization: FeatureStatus
@@ -47,14 +50,6 @@ class SupportedFeatures(BaseModel):
 class ProviderData(BaseModel):
     name: str
     supported_features: SupportedFeatures
-
-
-class TranslationConfig(BaseModel):
-    target_language: str = "en"  # Only used for one_way translation
-    source_languages: list[str] = ["*"]  # Only used for one_way translation
-    language_a: str | None = None  # Only used for two_way translation
-    language_b: str | None = None  # Only used for two_way translation
-    type: str = "one_way"
 
 
 class CommonConfig(BaseModel):
@@ -77,16 +72,17 @@ class ServiceConfig(BaseModel):
     project_id: str = ""
     prompt: str = ""
     recognizer_id: str = ""
+    # Parsed service-account key (Google). Passed directly to the SDK so no
+    # credentials file needs to exist on disk in deployment.
+    credentials_info: Optional[dict[str, Any]] = None
 
 
 class ProviderParams(BaseModel):
-    mode: OperationMode = "stt"
     language_hints: list[str] = []
     context: str = ""
     enable_speaker_diarization: bool = True
     enable_language_identification: bool = True
     enable_endpoint_detection: bool = True
-    translation: TranslationConfig | None = Field(default_factory=TranslationConfig)
 
 
 class ProviderConfig(BaseModel):

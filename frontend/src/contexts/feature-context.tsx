@@ -15,7 +15,11 @@ import {
 } from "@/lib/provider-features"; // Assuming this is the correct path
 import { snakeCaseToTitle } from "@/lib/utils";
 
-const IGNORED_FEATURES = ["confidence_scores", "timestamps"];
+const IGNORED_FEATURES = [
+  "confidence_scores",
+  "timestamps",
+  "max_language_hints",
+];
 
 // Schemas (copied from app.tsx, consider moving to a shared types file)
 const featureInfoSchema = z.object({
@@ -29,12 +33,23 @@ const providerFeaturesSchema = z.record(
     .object({
       name: z.string(),
       model: z.string(),
+      // Numeric config cap (None = unlimited); not a displayable feature.
+      max_language_hints: z.number().nullable().optional(),
     })
     .catchall(z.union([z.boolean(), featureInfoSchema]))
 );
 
 export type FeatureInfo = z.infer<typeof featureInfoSchema>;
 export type ProviderFeatures = z.infer<typeof providerFeaturesSchema>;
+
+export type FeatureState = FeatureInfo["state"];
+
+export interface FeatureListItem {
+  key: string;
+  label: string;
+  state: FeatureState;
+  comment?: string;
+}
 
 interface FeatureContextType {
   providerFeatures: ProviderFeatures | null;
@@ -46,6 +61,7 @@ interface FeatureContextType {
   ) => Record<string, FeatureInfo | boolean | string>;
   getFeatureSet: () => string[];
   getProviderFeaturesTextTable: (providerName: ProviderName) => string;
+  getProviderFeaturesList: (providerName: ProviderName) => FeatureListItem[];
 }
 
 const FeatureContext = createContext<FeatureContextType | undefined>(undefined);
@@ -105,11 +121,16 @@ export const FeatureProvider: React.FC<{ children: ReactNode }> = ({
 
   const getProviderFeatures = useCallback(
     (providerName: ProviderName) => {
-      return Object.fromEntries(
-        Object.entries(providerFeatures?.[providerName] || {}).filter(
-          ([key]) => ![...IGNORED_FEATURES, "name", "model"].includes(key)
-        )
-      );
+      const entries = Object.entries(
+        providerFeatures?.[providerName] || {}
+      ).filter(
+        ([key, value]) =>
+          ![...IGNORED_FEATURES, "name", "model"].includes(key) &&
+          // Drop non-feature config values (e.g. numeric max_language_hints).
+          typeof value !== "number" &&
+          value !== null
+      ) as [string, FeatureInfo | boolean | string][];
+      return Object.fromEntries(entries);
     },
     [providerFeatures]
   );
@@ -154,6 +175,34 @@ export const FeatureProvider: React.FC<{ children: ReactNode }> = ({
     [getProviderFeatures]
   );
 
+  const getProviderFeaturesList = useCallback(
+    (providerName: ProviderName): FeatureListItem[] => {
+      const filteredProviderFeatures = getProviderFeatures(providerName);
+
+      return Object.entries(filteredProviderFeatures)
+        .map(([key, value]): FeatureListItem | null => {
+          if (typeof value === "string") {
+            return null;
+          }
+          if (typeof value === "boolean") {
+            return {
+              key,
+              label: snakeCaseToTitle(key),
+              state: value ? "SUPPORTED" : "UNSUPPORTED",
+            };
+          }
+          return {
+            key,
+            label: snakeCaseToTitle(key),
+            state: value.state,
+            comment: value.comment,
+          };
+        })
+        .filter((item): item is FeatureListItem => item !== null);
+    },
+    [getProviderFeatures]
+  );
+
   return (
     <FeatureContext.Provider
       value={{
@@ -164,6 +213,7 @@ export const FeatureProvider: React.FC<{ children: ReactNode }> = ({
         getProviderFeatures,
         getFeatureSet,
         getProviderFeaturesTextTable,
+        getProviderFeaturesList,
       }}
     >
       {children}

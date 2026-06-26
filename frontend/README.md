@@ -76,7 +76,7 @@ The primary application state and logic are managed within `ComparisonContext`. 
 
 *   **Recording State**: `idle`, `starting`, `audioworkletloading`, `connecting`, `recording`, `stopping`.
 *   **Provider Outputs**: Stores transcript data (final and non-final parts), errors, and status messages for Soniox and the selected comparison provider.
-*   **UI Settings**: Selected operation mode (STT/MT), input language, target translation language, and the comparison provider.
+*   **UI Settings**: Input language and the comparison provider.
 *   **Actions**:
     *   `startRecording()`: Initiates microphone access, loads the `AudioWorklet`, and establishes a WebSocket connection.
     *   `stopRecording()`: Terminates the recording, cleans up resources.
@@ -92,7 +92,7 @@ The primary application state and logic are managed within `ComparisonContext`. 
 ### WebSocket Communication
 
 *   The frontend connects to a WebSocket endpoint (e.g., `ws://localhost:5173/compare/api/compare-websocket`, proxied to the backend).
-*   Parameters like `mode`, `input_languages`, `target_translation_language`, and active `providers` are sent as URL query parameters.
+*   Parameters like `language_hints` and active `providers` are sent as URL query parameters.
 *   The WebSocket receives JSON messages containing transcript parts (`text`, `is_final`, `speaker`, `language`, etc.) or error messages from the backend for each provider.
 
 ### Mocking for UI Development

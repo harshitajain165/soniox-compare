@@ -1,20 +1,18 @@
 import { Button } from "@/components/ui/button";
-import { PlayCircle, StopCircle, XIcon, Play, Pause, Mic } from "lucide-react";
+import { PlayCircle, StopCircle, Play, Pause, Mic, X } from "lucide-react";
 import { useComparison } from "@/contexts/comparison-context"; // Assuming this type is exported
 import { ChooseAudioFileDialog } from "./audio-picker";
 import { useState, useEffect, useCallback } from "react";
 import { Slider } from "@/components/ui/slider";
 import { AudioWaveButton } from "../audio-wave-button";
-import { useUrlSettings } from "@/hooks/use-url-settings";
+import { cn } from "@/lib/utils";
 
 export const ActionPanel = () => {
-  const { isValid } = useUrlSettings();
   const {
     recordingState,
     startRecording,
     stopRecording,
     selectedAudioFileName,
-    clearAudio,
     audioReady,
   } = useComparison();
   const isRecording = recordingState === "recording";
@@ -25,8 +23,10 @@ export const ActionPanel = () => {
   const hasAudioFile = !!selectedAudioFileName;
 
   return (
-    <div className="w-full flex flex-col gap-2 p-4 border-t border-gray-200">
-      <div className="flex gap-2">
+    <div className="w-full flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+      {hasAudioFile && <AudioFileControls />}
+      <div className="flex items-center justify-end gap-2 sm:gap-3">
+        <ChooseAudioFileDialog />
         <AudioWaveButton
           onClick={
             isRecording
@@ -38,18 +38,20 @@ export const ActionPanel = () => {
               : () => {} // Do nothing if file selected but not ready
           }
           variant={isRecording ? "destructive" : "default"}
-          className={`flex-1 ${isRecording ? "" : "bg-soniox"}`}
+          className={cn(
+            "shrink-0 px-5 flex-1 min-w-40 sm:flex-initial",
+            isRecording ? "" : "bg-soniox"
+          )}
           disabled={
-            !isValid ||
             isStarting ||
             isStopping ||
             (hasAudioFile && !audioReady && !isRecording)
           }
         >
           {isRecording ? (
-            <div className="flex flex-row items-center gap-x-2">
-              <StopCircle className="w-5 h-5" />
-              <span>
+            <div className="flex flex-row items-center gap-x-2 leading-none">
+              <StopCircle className="size-[18px] shrink-0" />
+              <span className="text-[15px] font-semibold tracking-tight">
                 {isConnecting
                   ? "Connecting..."
                   : isStarting
@@ -58,37 +60,22 @@ export const ActionPanel = () => {
               </span>
             </div>
           ) : hasAudioFile ? (
-            <div className="flex flex-row items-center gap-x-2">
-              <PlayCircle className="w-5 h-5" />
-              <span>{audioReady ? "Play audio file" : "Loading audio..."}</span>
+            <div className="flex flex-row items-center gap-x-2 leading-none">
+              <PlayCircle className="size-[18px] shrink-0" />
+              <span className="text-[15px] font-semibold tracking-tight">
+                {audioReady ? "Play audio file" : "Loading audio..."}
+              </span>
             </div>
           ) : (
-            <div className="flex flex-row items-center gap-x-2">
-              <Mic className="w-5 h-5" />
-              <span>Start talking</span>
+            <div className="flex flex-row items-center gap-x-2 leading-none">
+              <Mic className="size-[18px] shrink-0" />
+              <span className="text-[15px] font-semibold tracking-tight">
+                Start talking
+              </span>
             </div>
           )}
         </AudioWaveButton>
-        <ChooseAudioFileDialog disabled={hasAudioFile} />
       </div>
-      {hasAudioFile && (
-        <div className="flex items-center justify-between text-xs">
-          <span className="truncate" title={selectedAudioFileName}>
-            {selectedAudioFileName}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={clearAudio}
-            className="h-6 w-6 hover:text-soniox"
-            aria-label="Clear selected audio file"
-            disabled={isRecording || isStarting || isStopping || isConnecting}
-          >
-            <XIcon className="w-4 h-4" />
-          </Button>
-        </div>
-      )}
-      <AudioFileControls />
     </div>
   );
 };
@@ -100,14 +87,13 @@ const formatTime = (timeInSeconds: number): string => {
 };
 
 const AudioFileControls = () => {
-  const { isValid } = useUrlSettings();
   const {
     audioRef,
     recordingState,
     selectedAudioFileName,
     audioReady,
-    startRecording, // To initiate playback of the audio file
-    //stopRecording, // To stop playback
+    togglePreview,
+    clearAudio,
   } = useComparison();
 
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
@@ -173,26 +159,20 @@ const AudioFileControls = () => {
   }, [recordingState, selectedAudioFileName, audioReady, audioRef]);
 
   const handleTogglePlayPause = useCallback(() => {
-    if (!audioRef.current) return;
+    if (!audioRef.current || !selectedAudioFileName || !audioReady) return;
 
-    if (recordingState !== "recording") {
-      if (selectedAudioFileName && audioReady) {
-        startRecording();
-      }
-    } else {
+    if (recordingState === "recording") {
+      // During a live session, just play/pause the underlying audio element.
       if (audioRef.current.paused) {
         audioRef.current.play().catch(console.error);
       } else {
         audioRef.current.pause();
       }
+    } else {
+      // Otherwise, preview the file locally without starting a session.
+      togglePreview();
     }
-  }, [
-    audioRef,
-    recordingState,
-    selectedAudioFileName,
-    audioReady,
-    startRecording,
-  ]);
+  }, [audioRef, recordingState, selectedAudioFileName, audioReady, togglePreview]);
 
   const handleSeek = (value: number[]) => {
     if (audioRef.current && audioReady && duration > 0) {
@@ -215,48 +195,55 @@ const AudioFileControls = () => {
     audioRef.current &&
     !audioRef.current.paused;
 
+  const controlsDisabled =
+    !audioReady ||
+    recordingState === "starting" ||
+    recordingState === "stopping" ||
+    recordingState === "connecting";
+
   return (
-    <div className="flex items-center gap-2 p-2 bg-black/10 rounded-md">
+    <div className="group flex items-center gap-2 w-full sm:mr-auto sm:max-w-80 min-w-0 h-9 pl-2 pr-1 bg-white border border-input rounded-md shadow-xs dark:bg-input/30">
       <Button
         variant="ghost"
         size="icon"
         onClick={handleTogglePlayPause}
-        disabled={
-          !isValid ||
-          !audioReady ||
-          recordingState === "starting" ||
-          recordingState === "stopping" ||
-          recordingState === "connecting"
-        }
-        className="h-8 w-8"
-        aria-label={displayAsPlaying ? "Pause audio file" : "Play audio file"}
+        disabled={controlsDisabled}
+        className="h-6 w-6 shrink-0 rounded-full text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-700"
+        aria-label={displayAsPlaying ? "Pause preview" : "Preview audio file"}
       >
         {displayAsPlaying ? (
-          <Pause className="w-5 h-5" />
+          <Pause className="size-4 fill-current" />
         ) : (
-          <Play className="w-5 h-5" />
+          <Play className="size-4 fill-current translate-x-px" />
         )}
       </Button>
       <Slider
         value={[currentTime]}
         max={duration}
         step={1}
-        className="flex-1 h-2 data-[disabled]:opacity-50"
+        className="flex-1 [&_[data-slot=slider-track]]:h-1 [&_[data-slot=slider-range]]:bg-zinc-500 dark:[&_[data-slot=slider-range]]:bg-zinc-300 [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-2 [&_[data-slot=slider-thumb]]:border-zinc-500 dark:[&_[data-slot=slider-thumb]]:border-zinc-300 [&_[data-slot=slider-thumb]]:opacity-0 [&_[data-slot=slider-thumb]]:transition-opacity group-hover:[&_[data-slot=slider-thumb]]:opacity-100 focus-within:[&_[data-slot=slider-thumb]]:opacity-100"
         onValueChange={handleSeek}
+        disabled={controlsDisabled || duration === 0}
+        aria-label="Audio seek bar"
+      />
+      <div className="text-[11px] tabular-nums shrink-0 text-muted-foreground">
+        {formatTime(currentTime)} / {formatTime(duration)}
+      </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={clearAudio}
         disabled={
-          !audioReady ||
-          duration === 0 ||
+          recordingState === "recording" ||
           recordingState === "starting" ||
           recordingState === "stopping" ||
           recordingState === "connecting"
         }
-        aria-label="Audio seek bar"
-      />
-      <div className="text-xs w-[70px] text-right mr-2">
-        <span>{formatTime(currentTime)}</span> /{" "}
-        <span>{formatTime(duration)}</span>
-      </div>
-      {/* TODO: Add volume control later if needed */}
+        className="h-6 w-6 shrink-0 rounded-full text-zinc-500 hover:bg-zinc-100 hover:text-soniox dark:text-zinc-400 dark:hover:bg-zinc-700"
+        aria-label="Remove selected audio file"
+      >
+        <X className="h-3.5 w-3.5" />
+      </Button>
     </div>
   );
 };

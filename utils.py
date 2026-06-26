@@ -38,14 +38,12 @@ def make_part(
     start_ms: int | None = None,
     end_ms: int | None = None,
     confidence: float = 1.0,
-    translation_status: str | None = None,
 ) -> dict:
     return {
         "text": text,
         "is_final": is_final,
         "speaker": speaker,
         "language": language,
-        "translation_status": translation_status,
         "confidence": confidence,
         "start_ms": start_ms,
         "end_ms": end_ms,

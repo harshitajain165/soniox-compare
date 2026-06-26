@@ -9,7 +9,7 @@ DEBUG = True  # Whether to log connected providers
 
 class BaseProvider(ABC):
     """
-    Abstract base class for all STT/MT providers.
+    Abstract base class for all STT providers.
     """
 
     def __init__(self, config: ProviderConfig):
@@ -66,7 +66,7 @@ class BaseProvider(ABC):
     @abstractmethod
     async def receive(self) -> List[Dict[str, Any]]:
         """
-        Receive transcription or translation data.
+        Receive transcription data.
         Should return a list of dictionaries.
         """
         pass
@@ -99,43 +99,35 @@ def validate_capabilities(
     """
     warnings: List[Dict[str, Any]] = []
 
-    if config.params.mode == "mt":
-        assert config.params.translation is not None, (
-            "mt mode specified, but translation config is none."
+    # Cap language hints to what the provider's streaming API accepts. When the
+    # request exceeds the max, prefer automatic language detection (if the model
+    # supports it) over silently picking a subset; otherwise keep the first N.
+    max_hints = features.max_language_hints
+    hints = config.params.language_hints
+    if max_hints is not None and len(hints) > max_hints:
+        supports_auto = (
+            features.single_multilingual_model.state == FeatureState.SUPPORTED
         )
-
-        if features.translation_one_way.state == FeatureState.UNSUPPORTED:
-            # If one way translation if not supported, then two way translation
-            # also can not be. This is a hard failure.
-            raise ProviderError(f"Translation is not supported by {provider}.")
-
-        if (
-            config.params.translation.type == "one_way"
-            and features.translation_one_way.state == FeatureState.PARTIAL
-        ):
+        if supports_auto:
             warnings.append(
                 info_message(
                     provider,
-                    features.translation_one_way.comment
-                    or "Translation from one language to another is only partially supported.",
-                    level="info",
+                    f"This provider accepts at most {max_hints} language hint(s); "
+                    "falling back to automatic language detection.",
+                    level="warning",
                 )
             )
-
-        if config.params.translation.type == "two_way":
-            if features.translation_two_way.state == FeatureState.UNSUPPORTED:
-                raise ProviderError(
-                    f"Translation between two languages is not supported by {provider}."
+            config.params.language_hints = []
+        else:
+            warnings.append(
+                info_message(
+                    provider,
+                    f"This provider accepts at most {max_hints} language hint(s); "
+                    f"using the first {max_hints} and ignoring the rest.",
+                    level="warning",
                 )
-            elif features.translation_two_way.state == FeatureState.PARTIAL:
-                warnings.append(
-                    info_message(
-                        provider,
-                        features.translation_two_way.comment
-                        or "Translation between two languages is only partially supported.",
-                        level="info",
-                    )
-                )
+            )
+            config.params.language_hints = hints[:max_hints]
 
     if config.params.enable_speaker_diarization:
         state = features.speaker_diarization

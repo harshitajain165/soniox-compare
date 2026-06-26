@@ -2,20 +2,20 @@ import asyncio
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union, MutableSequence
 
 from google.api_core.client_options import ClientOptions
+from google.oauth2 import service_account
 from google.cloud.speech_v2.services.speech import SpeechAsyncClient
 from google.cloud.speech_v2.types import (
     cloud_speech,
     StreamingRecognizeRequest,
     StreamingRecognitionConfig,
     RecognitionConfig,
-    TranslationConfig,
     SpeechRecognitionAlternative,
     WordInfo,
     ExplicitDecodingConfig,
     StreamingRecognitionResult,
 )
 
-from config import get_language_mapping, get_translation_language_mapping
+from config import get_language_mapping
 from providers.base_provider import (
     ProviderError,
     BaseProvider,
@@ -46,41 +46,36 @@ class GoogleProvider(BaseProvider):
         self._recognizer_path: Optional[str] = None
         self._streaming_config: Optional[StreamingRecognitionConfig] = None
         self._manage_stream_task: Optional[asyncio.Task] = None
-        self._language_pairs = get_translation_language_mapping("google")
 
         self._results_queue: asyncio.Queue[Optional[Dict[str, Any]]] = asyncio.Queue()
         self.log_connected()
 
     def _update_transcription_languages(self) -> None:
         lang_mapping = get_language_mapping("google")
-        assert self.config.params.mode == "stt", (
-            "_update_tarnscription_languages called in mt mode."
-        )
 
-        if len(self.config.params.language_hints) == 0:
-            raise ProviderError(
-                "Google provider does not support auto language detect "
-                "in streaming mode."
-            )
+        # Chirp 3 StreamingRecognize accepts a single language code (or "auto");
+        # multiple explicit locales trigger a 400 "invalid argument". The hint
+        # list is already capped to one entry by validate_provider_capabilities,
+        # which falls back to auto-detection when more languages are requested.
+        hints = self.config.params.language_hints
+        if len(hints) == 0:
+            # Chirp 3 supports language-agnostic transcription: it detects and
+            # transcribes the dominant spoken language when language_codes=["auto"].
+            self.config.params.language_hints = ["auto"]
+            return
 
-        languages = list[str]()
-        for lang_hint in self.config.params.language_hints:
-            if lang_hint == "es":
-                languages.append("ca-ES")
-            elif lang_hint not in lang_mapping:
-                raise ProviderError(f"Google does not support language {lang_hint}.")
-            languages.append(lang_mapping[lang_hint])
+        lang_hint = hints[0]
+        if lang_hint not in lang_mapping:
+            raise ProviderError(f"Google does not support language {lang_hint}.")
 
-        if len(languages) > 3:
-            raise ProviderError("Google supports up 3 language inputs.")
-
-        self.config.params.language_hints = languages
+        self.config.params.language_hints = [lang_mapping[lang_hint]]
 
     def get_effective_region(self):
         configured_region = self.config.service.region
-        if not configured_region or configured_region.lower() == "global":
-            return "us-central1"  # Default to us-central1 for chirp_2/MT
-        return configured_region
+        if configured_region and configured_region.lower() != "global":
+            return configured_region
+        # Chirp 3 is only served from the `us`/`eu` multi-regions.
+        return "us"
 
     def _get_audio_encoding(self) -> AudioEncoding:
         # Validates and sets up explicit audio decoding configuration.
@@ -104,35 +99,24 @@ class GoogleProvider(BaseProvider):
 
         encoding_enum = self._get_audio_encoding()
 
+        # Chirp 3 streaming only emits utterance-level timestamps; word-level
+        # timestamps and word confidence are not supported in StreamingRecognize.
+        # Punctuation and capitalization are produced by the model automatically.
+        features = cloud_speech.RecognitionFeatures(
+            enable_automatic_punctuation=True,
+        )
+
         recognition_config_kwargs = {
             "explicit_decoding_config": cloud_speech.ExplicitDecodingConfig(
                 encoding=encoding_enum,
                 sample_rate_hertz=sample_rate,
                 audio_channel_count=channels,
             ),
-            "features": cloud_speech.RecognitionFeatures(
-                enable_automatic_punctuation=True,
-                enable_word_time_offsets=True,
-                enable_word_confidence=True,
-            ),
-            "model": getattr(self.config.service, "model", "chirp_2"),
+            "features": features,
+            "model": self.config.service.model,
         }
 
-        if self.config.params.mode == "stt":
-            recognition_config_kwargs["language_codes"] = (
-                self.config.params.language_hints
-            )
-        elif self.config.params.mode == "mt":
-            # Use the language and target from config for dynamic translation.
-            # NOTE: Translation requires the 'chirp_2' model.
-            recognition_config_kwargs["language_codes"] = (
-                self.config.params.translation.source_languages
-            )
-
-            # This is google.cloud.speech_v2.types.TranslationConfig
-            recognition_config_kwargs["translation_config"] = TranslationConfig(
-                target_language=self.config.params.translation.target_language
-            )
+        recognition_config_kwargs["language_codes"] = self.config.params.language_hints
 
         return recognition_config_kwargs
 
@@ -145,17 +129,26 @@ class GoogleProvider(BaseProvider):
         for warning in warnings:
             await self._results_queue.put(warning)
 
-        if self.config.params.mode == "stt":
-            self._update_transcription_languages()
-        elif self.config.params.mode == "mt":
-            self._update_translation_language_pair()
+        self._update_transcription_languages()
 
-        # For chirp_2 (which is our goal) or MT, a regional endpoint is necessary.
+        # Chirp 3 (STT) uses the `us` multi-region endpoint, which requires an
+        # explicit, location-matched endpoint.
         effective_region = self.get_effective_region()
 
         api_endpoint = f"{effective_region}-speech.googleapis.com"
         client_options = ClientOptions(api_endpoint=api_endpoint)
-        self.speech_client = SpeechAsyncClient(client_options=client_options)
+
+        # Credentials are provided in-process (from env var or local file) rather
+        # than via a GOOGLE_APPLICATION_CREDENTIALS file path. The GAPIC transport
+        # applies the default cloud-platform scope when credentials lack one.
+        if not self.config.service.credentials_info:
+            raise ValueError("Google credentials_info is not set.")
+        credentials = service_account.Credentials.from_service_account_info(
+            self.config.service.credentials_info
+        )
+        self.speech_client = SpeechAsyncClient(
+            credentials=credentials, client_options=client_options
+        )
         print(
             f"GoogleProvider: Client initialized for REGIONAL endpoint: {api_endpoint}"
         )
@@ -171,30 +164,30 @@ class GoogleProvider(BaseProvider):
             self.config.service.project_id, effective_region, recognizer_id_to_use
         )
 
-        # ---- Chirp 2 Translation Supported Language Pairs ----
-        # The Chirp 2 model has a specific, non-symmetrical list of supported language
-        # pairs for translation.
-        # This list is based on the official Google Cloud documentation.
-        #
-        # For translation TO English (en-US):
-        # ar-EG, ar-x-gulf, ar-x-levant, ar-x-maghrebi, ca-ES, cy-GB, de-DE, es-419,
-        # es-ES, es-US, et-EE, fr-CA, fr-FR, fa-IR, id-ID, it-IT, ja-JP, lv-LV, mn-MN,
-        # nl-NL, pt-BR, ru-RU, sl-SI, sv-SE, ta-IN, tr-TR, cmn-Hans-CN
-        #
-        # For translation FROM English (en-US):
-        # ar-EG, ar-x-gulf, ar-x-levant, ar-x-maghrebi, ca-ES, cy-GB, de-DE, et-EE,
-        # fa-IR, id-ID, ja-JP, lv-LV, mn-MN, sl-SI, sv-SE, ta-IN, tr-TR, cmn-Hans-CN
-        # ---------------------------------------------------------
         if not self._streaming_config:
             recognition_config_kwargs = self._create_recognition_config_kwargs()
             recognition_config_details = RecognitionConfig(**recognition_config_kwargs)
 
             # StreamingRecognitionConfig wraps the main RecognitionConfig for
             # streaming requests.
+            streaming_features_kwargs: Dict[str, Any] = {"interim_results": True}
+
+            # Chirp 3 exposes transcript-tied endpointing: it finalizes results
+            # promptly after end of speech, and that finalization drives our
+            # `<end>` marker. SHORT lowers finalization latency (default is
+            # ~2.4s). Only available on Chirp 3.
+            if self.config.params.enable_endpoint_detection:
+                EndpointingSensitivity = (
+                    cloud_speech.StreamingRecognitionFeatures.EndpointingSensitivity
+                )
+                streaming_features_kwargs["endpointing_sensitivity"] = (
+                    EndpointingSensitivity.ENDPOINTING_SENSITIVITY_SHORT
+                )
+
             self._streaming_config = StreamingRecognitionConfig(
                 config=recognition_config_details,
                 streaming_features=cloud_speech.StreamingRecognitionFeatures(
-                    interim_results=True, enable_voice_activity_events=True
+                    **streaming_features_kwargs
                 ),
             )
 
@@ -245,10 +238,13 @@ class GoogleProvider(BaseProvider):
             recognizer=self._recognizer_path, streaming_config=self._streaming_config
         )
 
-        # Subsequent requests contain audio data from _audio_chunk_queue
-        # until stop event is set.
+        # Subsequent requests contain audio data from _audio_chunk_queue.
+        # On a graceful end (send_end) we drain whatever is still queued and stop
+        # only when we hit the `None` sentinel, so trailing audio is flushed to
+        # Google before the stream is half-closed. The stop event is reserved for
+        # error/forced stops, which are handled in the timeout branch below.
         assert self._stop_sending_audio_event is not None
-        while not self._stop_sending_audio_event.is_set():
+        while True:
             try:
                 assert self._audio_chunk_queue is not None, (
                     "self._audio_chunk_queue is None."
@@ -265,10 +261,13 @@ class GoogleProvider(BaseProvider):
                 elif isinstance(chunk, bytes) and len(chunk) == 0:
                     pass  # Ignore empty audio byte strings.
 
-                # Add a small delay to avoid overwhelming the stream, especially with file input.
-                await asyncio.sleep(0.1)
+                # Note: do not throttle here. The client already paces audio in
+                # real time (mic capture / file playback); an extra sleep makes
+                # the sender fall behind real time and build an ever-growing
+                # backlog that gets dropped at end-of-stream.
             except asyncio.TimeoutError:
-                # Timeout allows checking _stop_sending_audio_event periodically.
+                # Queue is momentarily empty; only stop if a forced/error stop was
+                # requested. A graceful end is handled via the `None` sentinel.
                 if self._stop_sending_audio_event.is_set():
                     break
                 continue
@@ -279,7 +278,7 @@ class GoogleProvider(BaseProvider):
                     f"Internal error: _audio_request_generator failed with {str(e)}"
                 )
                 self.error = ProviderError(err_msg)
-                await self._results_queue.put(error_message(err_msg, "google"))
+                await self._results_queue.put(error_message("google", err_msg))
                 break
 
     async def _handle_error(self, response_error: Any):
@@ -288,7 +287,7 @@ class GoogleProvider(BaseProvider):
             f"{response_error.message} (code: {response_error.code})"
         )
         self.error = ProviderError(err_msg)
-        await self._results_queue.put(error_message(err_msg, "google"))
+        await self._results_queue.put(error_message("google", err_msg))
 
     def _process_words(
         self,
@@ -297,7 +296,6 @@ class GoogleProvider(BaseProvider):
         is_utterance_start: bool,
         is_final_segment: bool,
         language_code: str,
-        part_translation_status: str | None,
     ) -> tuple[list[dict], bool]:
         for word_info in words:
             # Ensure no leading space from Google
@@ -324,10 +322,7 @@ class GoogleProvider(BaseProvider):
             else:
                 end_ms = None
 
-            if (
-                self.config.params.enable_language_identification
-                or self.config.params.mode == "mt"
-            ):
+            if self.config.params.enable_language_identification:
                 language = language_code
             else:
                 language = None
@@ -339,7 +334,6 @@ class GoogleProvider(BaseProvider):
                 language=language,
                 confidence=word_info.confidence,
                 is_final=is_final_segment,
-                translation_status=part_translation_status,
             )
             all_parts_for_message.append(part)
 
@@ -357,7 +351,6 @@ class GoogleProvider(BaseProvider):
         is_utterance_start: bool,
         is_final_segment: bool,
         language_code: str,
-        part_translation_status: str | None,
         confidence: float,
         result_end_offset,
     ) -> tuple[list[dict], bool]:
@@ -378,10 +371,7 @@ class GoogleProvider(BaseProvider):
         else:
             end_ms_val = None
 
-        if (
-            self.config.params.enable_language_identification
-            or self.config.params.mode == "mt"
-        ):
+        if self.config.params.enable_language_identification:
             language = language_code
         else:
             language = None
@@ -392,7 +382,6 @@ class GoogleProvider(BaseProvider):
             is_final=is_final_segment,
             language=language,
             end_ms=end_ms_val,
-            translation_status=part_translation_status,
         )
         all_parts_for_message.append(part)
         if current_text_segment.strip():
@@ -400,21 +389,20 @@ class GoogleProvider(BaseProvider):
 
         return all_parts_for_message, is_utterance_start
 
-    def _make_endpoint_part(
-        self, response: cloud_speech.StreamingRecognizeResponse
-    ) -> dict:
-        total_ms = (
-            response.speech_event_offset.total_seconds() * 1000
-            if response.speech_event_offset
-            else None
-        )
+    def _make_endpoint_part(self, result_end_offset) -> dict:
+        # Marker for a finalized segment boundary. Final (matching every other
+        # provider): a non-final marker would land in the frontend's
+        # `nonFinalParts`, which is only replaced by the next data message, so if
+        # it were the last message before the stream closed it would stay
+        # rendered as "temporary" forever.
+        end_ms = result_end_offset.total_seconds() * 1000 if result_end_offset else None
         return make_part(
             text=" <end>",
-            is_final=False,
+            is_final=True,
             speaker=None,
             language=None,
-            start_ms=total_ms,
-            end_ms=total_ms,
+            start_ms=end_ms,
+            end_ms=end_ms,
         )
 
     async def _manage_stream(self):
@@ -424,7 +412,7 @@ class GoogleProvider(BaseProvider):
         if not self.speech_client:
             err_msg = "Google client not initialized"
             self.error = ProviderError(err_msg)
-            await self._results_queue.put(error_message(err_msg, "google"))
+            await self._results_queue.put(error_message("google", err_msg))
             return
 
         # Used for prepending spaces correctly between transcript parts.
@@ -446,32 +434,14 @@ class GoogleProvider(BaseProvider):
                     await self._handle_error(response_error)
                     break
 
-                SpeechEventType = (
-                    cloud_speech.StreamingRecognizeResponse.SpeechEventType
-                )
-
                 # Process transcript results and manage spacing.
                 all_parts_for_message = []
 
-                if response.speech_event_type == SpeechEventType.SPEECH_ACTIVITY_END:
-                    all_parts_for_message.append(self._make_endpoint_part(response))
-
-                translation_cfg = self.config.params.translation
                 results: MutableSequence[StreamingRecognitionResult] = response.results
 
                 for result in results:
                     if not result.alternatives:
                         continue
-                    part_translation_status = None
-                    if self.config.params.mode == "mt":
-                        assert translation_cfg is not None
-                        if result.language_code == translation_cfg.target_language:
-                            part_translation_status = "translation"
-                        elif result.language_code in translation_cfg.source_languages:
-                            # Source language
-                            part_translation_status = "original"
-                        # If language_code is neither, it remains None (or handle as an
-                        # unexpected case if needed)
 
                     alternative: SpeechRecognitionAlternative = result.alternatives[0]
                     is_final_segment = result.is_final
@@ -484,7 +454,6 @@ class GoogleProvider(BaseProvider):
                             is_utterance_start=is_utterance_start,
                             is_final_segment=is_final_segment,
                             language_code=language_code,
-                            part_translation_status=part_translation_status,
                         )
 
                     elif alternative.transcript:
@@ -495,10 +464,22 @@ class GoogleProvider(BaseProvider):
                                 is_utterance_start=is_utterance_start,
                                 is_final_segment=is_final_segment,
                                 language_code=language_code,
-                                part_translation_status=part_translation_status,
                                 confidence=alternative.confidence,
                                 result_end_offset=result.result_end_offset,
                             )
+                        )
+
+                    # Transcript-tied endpoint: append the `<end>` marker right
+                    # after a finalized segment. With Chirp 3's endpointing this
+                    # finalization happens promptly at end of speech, so the
+                    # marker is aligned with the transcript (unlike the acoustic
+                    # SPEECH_ACTIVITY_END VAD event we previously relied on).
+                    if (
+                        is_final_segment
+                        and self.config.params.enable_endpoint_detection
+                    ):
+                        all_parts_for_message.append(
+                            self._make_endpoint_part(result.result_end_offset)
                         )
 
                 if all_parts_for_message:
@@ -511,10 +492,14 @@ class GoogleProvider(BaseProvider):
             pass
         except Exception as e:
             if "400 StreamingRecognize" in str(e):
+                docs_url = (
+                    "https://cloud.google.com/speech-to-text/docs/chirp_3"
+                    "#language_availability_for_transcription"
+                )
                 err_msg = (
-                    "Google claims to support this language pair but does not. "
+                    "This language is not supported by Google."
                     "[Click here to see Googles official supported languages]"
-                    "(https://cloud.google.com/speech-to-text/v2/docs/chirp_2-model#language_availability_for_translation)"
+                    f"({docs_url})"
                 )
             else:
                 err_msg = f"Google streaming error: {str(e)}"
@@ -584,13 +569,13 @@ class GoogleProvider(BaseProvider):
         Signals the end of audio transmission and waits for the stream manager to
         process remaining data.
         """
-        if self._stop_sending_audio_event:
-            self._stop_sending_audio_event.set()  # Signal audio generator to stop.
-
+        # Enqueue the end-of-audio sentinel WITHOUT setting the stop event first,
+        # so the request generator flushes every buffered audio chunk before it
+        # half-closes the stream. Setting the stop event here would make the
+        # generator exit immediately and drop any audio still in the queue,
+        # truncating the tail of the transcription.
         if self._audio_chunk_queue:
-            await self._audio_chunk_queue.put(
-                None
-            )  # Send sentinel to unblock generator if waiting.
+            await self._audio_chunk_queue.put(None)
 
         # Wait for the _manage_stream_task to finish processing responses from Google.
         if self._manage_stream_task and not self._manage_stream_task.done():
@@ -653,11 +638,19 @@ class GoogleProvider(BaseProvider):
                 "(provider not initialized properly)."
             )
             self.error = ProviderError(err_msg)
-            return [error_message(err_msg, "google")]
+            return [error_message("google", err_msg)]
 
-        items = []
+        try:
+            first = await asyncio.wait_for(self._results_queue.get(), timeout=0.1)
+        except asyncio.TimeoutError:
+            return []
+        if not first:
+            return []
+        items = [first]
         while not self._results_queue.empty():
-            items.append(await self._results_queue.get())
+            item = self._results_queue.get_nowait()
+            if item:
+                items.append(item)
         return items
 
     def format_output(self, parts_list):
@@ -667,94 +660,36 @@ class GoogleProvider(BaseProvider):
             "parts": parts_list,
         }
 
-    def _update_translation_language_pair(self) -> None:
-        assert self.config.params.translation is not None, (
-            "Translation params must not be non."
-        )
-
-        source_langs = self.config.params.translation.source_languages
-        target_lang = self.config.params.translation.target_language
-
-        if not source_langs:
-            raise ProviderError("No source language codes provided.")
-        if not target_lang:
-            raise ProviderError("No target language codes provided.")
-
-        # Holds available source languages: {"en": "en-US", "fr": "fr-FR"}
-        available_source_langs = {
-            code.split("-")[0]: code for code in self._language_pairs.keys()
-        }
-
-        google_source_langs = list[str]()
-        google_target_lang = ""
-        for i, source_lang in enumerate(source_langs):
-            # Special case: source_lang == "zh"
-            if source_lang == "zh":
-                source_full_code = "cmn-Hans-CN"
-            else:
-                if source_lang not in available_source_langs:
-                    raise ProviderError(
-                        f"Source language: {source_lang} not supported."
-                    )
-                source_full_code = available_source_langs[source_lang]
-
-            available_target_langs = self._language_pairs[source_full_code]
-            assert isinstance(available_target_langs, list), (
-                "For each source language, there should be a list "
-                "of target languages in google translation mapping, "
-                f"got {type(available_target_langs)}"
-            )
-            available_target_map = {
-                code.split("-")[0]: code for code in available_target_langs
-            }
-
-            if target_lang == "es":
-                resolved_target = "ca-ES"
-            elif target_lang == "zh":
-                resolved_target = "cmn-Hans-CN"
-            else:
-                resolved_target = available_target_map.get(target_lang)
-
-            if not resolved_target:
-                raise ProviderError(
-                    f"Unsupported language pair: "
-                    f"{self.config.params.translation.source_languages[0]} -> "
-                    f"{self.config.params.translation.target_language}."
-                    "\n[Click here to see available languages.]"
-                    "(https://cloud.google.com/speech-to-text/v2/docs/chirp_2-model)"
-                )
-            if i == 0:
-                google_target_lang = resolved_target
-
-            google_source_langs.append(source_full_code)
-
-        self.config.params.translation.source_languages = google_source_langs
-        self.config.params.translation.target_language = google_target_lang
-
     @staticmethod
     def get_available_features():
         supported = FeatureStatus.supported()
         unsupported = FeatureStatus.unsupported()
         return SupportedFeatures(
-            # https://cloud.google.com/speech-to-text/v2/docs/chirp_2-model
+            # https://cloud.google.com/speech-to-text/docs/chirp_3
             name="Google",
-            model="chirp_2",
-            speaker_diarization=unsupported,
-            language_detection=unsupported,
-            endpoint_detection=FeatureStatus.partial(
-                comment="Google does support speech events and a sort of endpoint "
-                "detection via SpeechEventType.SPEECH_ACTIVITY_END. These events "
-                "are however not synchronized with the final transcription."
+            model="chirp_3",
+            speaker_diarization=FeatureStatus.unsupported(
+                comment="Chirp 3 diarization is only available in batch/synchronous "
+                "recognition, not in streaming."
             ),
-            context=supported,
-            timestamps=supported,
-            translation_one_way=supported,
-            translation_two_way=unsupported,
-            confidence_scores=supported,
+            endpoint_detection=FeatureStatus.partial(
+                comment="Uses Chirp 3's endpointing_sensitivity (SHORT) for "
+                "transcript-tied endpointing: the model finalizes promptly at end "
+                "of speech and that finalization drives the `<end>` marker. It is "
+                "silence/VAD-based rather than a semantic turn decision."
+            ),
+            timestamps=FeatureStatus.partial(
+                comment="Chirp 3 streaming provides utterance-level timestamps only; "
+                "word-level timestamps require batch/synchronous recognition."
+            ),
+            confidence_scores=FeatureStatus.partial(
+                comment="Chirp 3 returns a value, but it isn't a true word-level "
+                "confidence score."
+            ),
             real_time_latency_config=unsupported,
             manual_finalization=unsupported,
             customization=unsupported,
-            language_identification=unsupported,
-            language_hints=unsupported,
+            language_identification=supported,
+            language_hints=supported,
             single_multilingual_model=supported,
         )

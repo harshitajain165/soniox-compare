@@ -76,14 +76,12 @@
 
 <body>
     <header>
-        <button id="trigger">Start</button> Currently set to: STT/en
+        <button id="trigger">Start</button> Currently set to: en
     </header>
     <div class="output" id="output"></div>
     <script>
-        const MODE = "stt";
-        const PROVIDERS = ["soniox", "openai", "google", "azure", "speechmatics", "deepgram", "assembly"];
+        const PROVIDERS = ["soniox", "openai", "google", "azure", "speechmatics", "deepgram", "assembly", "cartesia", "elevenlabs"];
         const SOURCE_LANGUAGES = ["en-US", "sl-SI"];
-        const TARGET_TRANSLATION_LANGUAGE = "en-US";
         const outputEl = document.getElementById("output");
         const trigger = document.getElementById("trigger");
 
@@ -159,9 +157,7 @@
                 stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
                 const params = new URLSearchParams();
-                params.set("mode", MODE);
-                params.set("target_translation_language", TARGET_TRANSLATION_LANGUAGE);
-                SOURCE_LANGUAGES.forEach(lang => params.append("input_languages", lang));
+                SOURCE_LANGUAGES.forEach(lang => params.append("language_hints", lang));
                 PROVIDERS.forEach(p => params.append("providers", p));
 
                 ws = new WebSocket(`/compare/api/compare-websocket?${params.toString()}`);
