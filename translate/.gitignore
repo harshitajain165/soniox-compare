@@ -6,17 +6,7 @@ dist/
 wheels/
 *.egg-info
 
-# Tool caches
-.ruff_cache/
-
 # Virtual environments
 .venv
+
 .env
-venv
-
-.cursor
-
-credentials-google.json
-
-# MacOS
-.DS_Store

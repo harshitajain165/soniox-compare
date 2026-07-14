@@ -1,0 +1,34 @@
+[project]
+name = "soniox-speech-to-speech-compare"
+version = "0.1.0"
+description = "Side-by-side real-time speech translation comparison across providers."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "azure-cognitiveservices-speech>=1.50.0",
+    "fastapi[standard]>=0.136.1",
+    "google-genai>=1.0.0",
+    "httpx>=0.28.1",
+    "numpy>=2.0.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.2.2",
+    "soxr>=0.5.0",
+    "websockets>=16.0",
+]
+
+[project.scripts]
+dev = "dev:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+only-include = [
+    "dev.py",
+    "main.py",
+    "utils.py",
+    "config.py",
+    "providers",
+    "frontend/dist",
+]
