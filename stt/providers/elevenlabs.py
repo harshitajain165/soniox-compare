@@ -189,7 +189,8 @@ class ElevenlabsProvider(BaseProvider):
         if not words:
             text = data.get("text") or ""
             if text:
-                text_parts = [make_part(text=text, is_final=True, language=language)]
+                # Trailing space so consecutive committed finals don't glue.
+                text_parts = [make_part(text=text + " ", is_final=True, language=language)]
                 if emit_endpoint:
                     text_parts.append(make_part(text=" <end>", is_final=True))
                 self._emit_parts(text_parts)
@@ -223,6 +224,10 @@ class ElevenlabsProvider(BaseProvider):
             )
 
         if parts:
+            # Trailing space on the segment's last word so committed finals
+            # don't glue (guarded: word spacing tokens may already add it).
+            if not parts[-1]["text"].endswith(" "):
+                parts[-1]["text"] += " "
             if emit_endpoint:
                 last_end = parts[-1].get("end_ms")
                 parts.append(

@@ -21,7 +21,7 @@ import type { ProviderName } from "@/lib/provider-features";
 export const AddProviderButton = () => {
   const { settings, setSelectedProviders } = useUrlSettings();
   const { selectedProviders = [] } = settings;
-  const { providerFeatures, availableComparisonProviders } = useFeatures();
+  const { providerFeatures, availableProviders } = useFeatures();
   const { disabledReasons } = useModeSupport();
   const { recordingState } = useComparison();
   const prefersReducedMotion = useReducedMotion();
@@ -34,7 +34,7 @@ export const AddProviderButton = () => {
     recordingState === "connecting" ||
     recordingState === "stopping";
 
-  const remainingProviders = availableComparisonProviders.filter(
+  const remainingProviders = availableProviders.filter(
     (p) => !selectedProviders.includes(p)
   );
 
@@ -74,7 +74,7 @@ export const AddProviderButton = () => {
             Add provider
           </DialogTitle>
           <DialogDescription>
-            Pick a provider to compare against Soniox.
+            Pick a provider to add to the comparison.
           </DialogDescription>
         </DialogHeader>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">

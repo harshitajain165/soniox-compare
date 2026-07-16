@@ -36,17 +36,29 @@ const defaultTargetLanguage = "es";
 const defaultVoice = "";
 const defaultLanguageHints: string[] = ["en"];
 
-const initialComparisonProviders = ALL_PROVIDERS_LIST.filter(
-  (p) => p !== SONIOX_PROVIDER
-);
 const defaultSelectedProviders: ProviderName[] = [
-  ...initialComparisonProviders.slice(0, 2),
+  ...ALL_PROVIDERS_LIST.slice(0, 3),
 ];
 const defaultEnableSpeakerDiarization = true;
 const defaultEnableLanguageIdentification = true;
 const defaultEnableEndpointDetection = false;
 
 const providerLiterals = ALL_PROVIDERS_LIST as ReadonlyArray<ProviderName>;
+
+const baseProvidersParser = parseAsArrayOf(
+  parseAsStringLiteral(providerLiterals)
+);
+
+const sanitizeProviders = (providers: ProviderName[]): ProviderName[] => {
+  const unique = [...new Set(providers)];
+  return unique.length > 0 ? unique : defaultSelectedProviders;
+};
+
+const selectedProvidersParser = createParser({
+  parse: (query) => sanitizeProviders(baseProvidersParser.parse(query) ?? []),
+  serialize: baseProvidersParser.serialize.bind(baseProvidersParser),
+  eq: baseProvidersParser.eq?.bind(baseProvidersParser),
+}).withDefault(defaultSelectedProviders);
 
 const baseLanguageHintsParser = parseAsArrayOf(parseAsString);
 const languageHintsParser = createParser({
@@ -61,20 +73,17 @@ const settingParsers = {
   targetLanguage: parseAsString.withDefault(defaultTargetLanguage),
   voice: parseAsString.withDefault(defaultVoice),
   languageHints: languageHintsParser,
-  selectedProviders: parseAsArrayOf(
-    parseAsStringLiteral(providerLiterals)
-  ).withDefault(defaultSelectedProviders),
-  s2sProvider: parseAsStringLiteral(providerLiterals).withDefault(
-    SONIOX_PROVIDER
-  ),
+  selectedProviders: selectedProvidersParser,
+  s2sProvider:
+    parseAsStringLiteral(providerLiterals).withDefault(SONIOX_PROVIDER),
   enableSpeakerDiarization: parseAsBoolean.withDefault(
-    defaultEnableSpeakerDiarization
+    defaultEnableSpeakerDiarization,
   ),
   enableLanguageIdentification: parseAsBoolean.withDefault(
-    defaultEnableLanguageIdentification
+    defaultEnableLanguageIdentification,
   ),
   enableEndpointDetection: parseAsBoolean.withDefault(
-    defaultEnableEndpointDetection
+    defaultEnableEndpointDetection,
   ),
   selectedFileName: parseAsString,
 };
@@ -92,8 +101,7 @@ export function activeProviders(settings: ParsedUrlSettings): ProviderName[] {
   if (settings.mode === "s2s") {
     return [settings.s2sProvider ?? SONIOX_PROVIDER];
   }
-  const selected = settings.selectedProviders ?? [];
-  return [SONIOX_PROVIDER, ...selected.filter((p) => p !== SONIOX_PROVIDER)];
+  return sanitizeProviders(settings.selectedProviders ?? []);
 }
 
 export function useUrlSettings() {
@@ -111,20 +119,20 @@ export function useUrlSettings() {
     params.set("voice", settings.mode === "s2s" ? settings.voice || "" : "");
 
     sanitizeLanguageHintsBasic(settings.languageHints || []).forEach((hint) =>
-      params.append("language_hints", hint)
+      params.append("language_hints", hint),
     );
 
     params.set(
       "enable_speaker_diarization",
-      String(settings.enableSpeakerDiarization)
+      String(settings.enableSpeakerDiarization),
     );
     params.set(
       "enable_language_identification",
-      String(settings.enableLanguageIdentification)
+      String(settings.enableLanguageIdentification),
     );
     params.set(
       "enable_endpoint_detection",
-      String(settings.enableEndpointDetection)
+      String(settings.enableEndpointDetection),
     );
 
     activeProviders(settings).forEach((p) => params.append("providers", p));

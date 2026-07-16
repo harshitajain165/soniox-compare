@@ -17,7 +17,6 @@ import { activeProviders, useUrlSettings } from "@/hooks/use-url-settings";
 import { useModeSupport } from "@/hooks/use-mode-support";
 import { useFeatures } from "@/contexts/feature-context";
 import { useComparison } from "@/contexts/comparison-context";
-import { SONIOX_PROVIDER } from "@/lib/provider-features";
 
 /**
  * Header control choosing the single speech-to-speech provider. Mirrors the
@@ -25,7 +24,7 @@ import { SONIOX_PROVIDER } from "@/lib/provider-features";
  */
 export const ProviderSelect = () => {
   const { settings, setS2sProvider } = useUrlSettings();
-  const { providerFeatures, availableComparisonProviders } = useFeatures();
+  const { providerFeatures, availableProviders } = useFeatures();
   const { disabledReasons } = useModeSupport();
   const { recordingState } = useComparison();
   const prefersReducedMotion = useReducedMotion();
@@ -34,7 +33,7 @@ export const ProviderSelect = () => {
 
   const disabled = recordingState !== "idle";
   const provider = activeProviders(settings)[0];
-  const providers = [SONIOX_PROVIDER, ...availableComparisonProviders];
+  const providers = availableProviders;
   const name = providerFeatures?.[provider]?.name ?? provider;
 
   return (

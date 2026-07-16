@@ -20,6 +20,7 @@ type Props = {
   onSwap: (provider: ProviderName) => void;
   disabled: boolean;
   prefersReducedMotion: boolean;
+  className?: string;
   children: ReactNode;
 };
 
@@ -33,11 +34,11 @@ export const MobileComparisonCard = ({
   onSwap,
   disabled,
   prefersReducedMotion,
+  className,
   children,
 }: Props) => {
   const [flipped, setFlipped] = React.useState(false);
 
-  // Reset to the transcript face whenever the displayed provider changes.
   React.useEffect(() => {
     setFlipped(false);
   }, [provider]);
@@ -48,6 +49,7 @@ export const MobileComparisonCard = ({
         title={title}
         subtitle={subtitle}
         titleTooltip={titleTooltip}
+        className={className}
         logo={<ProviderLogo provider={provider} name={title} />}
         priceSection={
           <ProviderCost

@@ -332,20 +332,16 @@ export const ComparisonProvider = ({
         else player.stop();
       }
 
-      // Clear the statusMessages (so we don't show "Recording..." after
-      // stopping), and promote any trailing partials to final. Audio that ends
-      // mid-utterance would otherwise leave the last block in gray "still
-      // typing" styling forever, since no more tokens will arrive to upgrade it.
+      // Clear "Recording..." on stop. Like the STT app, we do NOT promote
+      // trailing partials here: after "END" the providers flush their finalized
+      // tail over the socket (kept open for WS_DRAIN_MS), which arrives as a
+      // normal final. Promoting here would double Soniox's re-emitted tail.
       setProviderOutputs((prev) => {
         const newState = { ...prev };
         Object.keys(newState).forEach((key) => {
-          const provider = key as ProviderName;
-          const output = newState[provider];
-          newState[provider] = {
-            ...output,
+          newState[key as ProviderName] = {
+            ...newState[key as ProviderName],
             statusMessage: "",
-            finalParts: [...output.finalParts, ...output.nonFinalParts],
-            nonFinalParts: [],
           };
         });
         return newState;

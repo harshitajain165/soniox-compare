@@ -21,6 +21,7 @@ type Props = {
   disabled: boolean;
   prefersReducedMotion: boolean;
   disabledReasons?: Partial<Record<ProviderName, string>>;
+  className?: string;
   children: ReactNode;
 };
 
@@ -35,6 +36,7 @@ export const SwappableProviderCard = ({
   disabled,
   prefersReducedMotion,
   disabledReasons,
+  className,
   children,
 }: Props) => {
   const [flipped, setFlipped] = React.useState(false);
@@ -49,6 +51,7 @@ export const SwappableProviderCard = ({
         title={title}
         subtitle={subtitle}
         titleTooltip={titleTooltip}
+        className={className}
         logo={<ProviderLogo provider={provider} name={title} />}
         priceSection={
           <ProviderCost

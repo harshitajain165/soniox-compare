@@ -13,18 +13,18 @@ export type ProviderName = (typeof ALL_PROVIDERS_LIST)[number];
 
 export const SONIOX_PROVIDER = ALL_PROVIDERS_LIST[0];
 
-// Square PNG logos live in /public/provider-icons. Most follow the
-// `${provider}-icon.png` convention; `assembly` is the lone exception.
+// Square SVG logos live in /public/provider-icons. Most follow the
+// `${provider}-icon.svg` convention; `assembly` is the lone exception.
 export const PROVIDER_ICON_FILES: Record<ProviderName, string> = {
-  soniox: "soniox-icon.png",
-  openai: "openai-icon.png",
-  google: "google-icon.png",
-  azure: "azure-icon.png",
-  speechmatics: "speechmatics-icon.png",
-  deepgram: "deepgram-icon.png",
-  assembly: "assemblyai-icon.png",
-  cartesia: "cartesia-icon.png",
-  elevenlabs: "elevenlabs-icon.png",
+  soniox: "soniox-icon.svg",
+  openai: "openai-icon.svg",
+  google: "google-icon.svg",
+  azure: "azure-icon.svg",
+  speechmatics: "speechmatics-icon.svg",
+  deepgram: "deepgram-icon.svg",
+  assembly: "assemblyai-icon.svg",
+  cartesia: "cartesia-icon.svg",
+  elevenlabs: "elevenlabs-icon.svg",
 };
 
 export const getProviderIcon = (provider: ProviderName): string =>

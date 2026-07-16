@@ -51,7 +51,7 @@ export interface FeatureListItem {
 
 interface FeatureContextType {
   providerFeatures: ProviderFeatures | null;
-  availableComparisonProviders: ProviderName[];
+  availableProviders: ProviderName[];
   isLoading: boolean;
   error: Error | null;
   getProviderFeatures: (
@@ -74,10 +74,8 @@ export const FeatureProvider = ({ children }: Props) => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<Error | null>(null);
 
-  const availableComparisonProviders = useMemo(() => {
-    return providerFeatures
-      ? ALL_PROVIDERS_LIST.filter((p) => p !== SONIOX_PROVIDER)
-      : [];
+  const availableProviders = useMemo(() => {
+    return providerFeatures ? [...ALL_PROVIDERS_LIST] : [];
   }, [providerFeatures]);
 
   useEffect(() => {
@@ -206,7 +204,7 @@ export const FeatureProvider = ({ children }: Props) => {
     <FeatureContext.Provider
       value={{
         providerFeatures,
-        availableComparisonProviders,
+        availableProviders,
         isLoading,
         error,
         getProviderFeatures,

@@ -1,5 +1,4 @@
 import React from "react";
-import { Panel } from "@/components/panel";
 import { useUrlSettings } from "@/hooks/use-url-settings";
 import { useComparison } from "@/contexts/comparison-context";
 import { SONIOX_PROVIDER, type ProviderName } from "@/lib/provider-features";
@@ -7,20 +6,12 @@ import { cn } from "@/lib/utils";
 import { useFeatures } from "@/contexts/feature-context";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { ProviderFeaturesTooltip } from "./provider-features-tooltip";
-import { ProviderCost } from "./provider-cost";
-import { ProviderLogo } from "./provider-logo";
 import { InfoMessages } from "./info-messages";
 import { AddProviderTile } from "./add-provider-tile";
 import { MobileComparisonCard } from "./mobile-comparison-card";
 import { SortableProviderCard } from "./sortable-provider-card";
-import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { TranscriptRenderer } from "./transcript-renderer";
-import {
-  AnimatePresence,
-  motion,
-  useReducedMotion,
-  type Transition,
-} from "motion/react";
+import { AnimatePresence, useReducedMotion } from "motion/react";
 import {
   DndContext,
   KeyboardSensor,
@@ -37,17 +28,15 @@ import {
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 
+const MOBILE_CARD_LIMIT = 2;
+
 export const ProviderGrid = () => {
   const { settings, setSelectedProviders } = useUrlSettings();
   const { selectedProviders = [] } = settings;
 
   const { providerOutputs, appError, recordingState } = useComparison();
-  const {
-    providerFeatures,
-    availableComparisonProviders,
-    // getProviderFeatures,
-    getProviderFeaturesList,
-  } = useFeatures();
+  const { providerFeatures, availableProviders, getProviderFeaturesList } =
+    useFeatures();
 
   const prefersReducedMotion = useReducedMotion();
   const isMobile = useIsMobile();
@@ -57,6 +46,8 @@ export const ProviderGrid = () => {
     recordingState === "starting" ||
     recordingState === "connecting" ||
     recordingState === "stopping";
+
+  const canRemove = selectedProviders.length > 1;
 
   const handleRemoveProvider = (provider: ProviderName) => {
     setSelectedProviders(selectedProviders.filter((p) => p !== provider));
@@ -101,7 +92,7 @@ export const ProviderGrid = () => {
   const MIN_CARD_WIDTH = 280;
   const CARD_GAP = 12; // matches gap-3
   const CARD_PADDING = 12; // matches p-3 (per side)
-  const totalCards = 1 + selectedProviders.length; // Soniox + comparisons
+  const totalCards = Math.max(1, selectedProviders.length);
   // cardsWidth is the border-box; the cards lay out within the padded content.
   const availableWidth = Math.max(0, cardsWidth - 2 * CARD_PADDING);
   const maxColumns = Math.max(
@@ -125,17 +116,11 @@ export const ProviderGrid = () => {
     minHeight: "10rem",
   };
 
-  const springTransition: Transition = prefersReducedMotion
-    ? { duration: 0 }
-    : { type: "spring", stiffness: 420, damping: 34 };
+  const nameOf = (provider: ProviderName) =>
+    providerFeatures?.[provider]?.name ?? provider;
 
-  const cardMotion = prefersReducedMotion
-    ? {}
-    : {
-        initial: { opacity: 0, scale: 0.9, y: 10 },
-        animate: { opacity: 1, scale: 1, y: 0 },
-        exit: { opacity: 0, scale: 0.9 },
-      };
+  const accentOf = (provider: ProviderName) =>
+    provider === SONIOX_PROVIDER ? "text-soniox" : undefined;
 
   const renderPanelBody = (providerName: ProviderName) => {
     const outputData = providerOutputs[providerName] || {
@@ -165,85 +150,55 @@ export const ProviderGrid = () => {
   };
 
   if (isMobile) {
-    // Mobile is limited to Soniox vs a single provider: two stacked cards.
-    const comparisonProvider =
-      selectedProviders.filter((p) => p !== SONIOX_PROVIDER)[0] ?? null;
-    const pickableProviders = availableComparisonProviders.filter(
-      (p) => p !== comparisonProvider
+    const shown = selectedProviders.slice(0, MOBILE_CARD_LIMIT);
+    const pickableProviders = availableProviders.filter(
+      (p) => !shown.includes(p)
     );
 
-    // Mobile compares against exactly one provider, so swapping replaces it
-    // outright rather than growing the selection (which recording would honor).
-    const handleSwapProvider = (provider: ProviderName) => {
-      setSelectedProviders([provider]);
+    const handleSwapProvider = (index: number) => (provider: ProviderName) => {
+      const next = [...shown];
+      next[index] = provider;
+      setSelectedProviders(next);
     };
 
     return (
       <div className="flex h-full flex-col gap-3 overflow-hidden bg-gray-100 p-3 dark:bg-gray-900">
-        <div className="min-h-0 flex-1">
-          <TooltipProvider>
-            <Panel
-              title={providerFeatures?.[SONIOX_PROVIDER]?.name ?? SONIOX_PROVIDER}
-              subtitle={providerFeatures?.[SONIOX_PROVIDER]?.model}
-              titleTooltip={
-                <ProviderFeaturesTooltip
-                  features={getProviderFeaturesList(SONIOX_PROVIDER)}
-                />
-              }
-              logo={
-                <ProviderLogo
-                  provider={SONIOX_PROVIDER}
-                  name={
-                    providerFeatures?.[SONIOX_PROVIDER]?.name ?? SONIOX_PROVIDER
-                  }
-                />
-              }
-              priceSection={
-                <ProviderCost
-                  provider={SONIOX_PROVIDER}
-                  providerName={
-                    providerFeatures?.[SONIOX_PROVIDER]?.name ?? SONIOX_PROVIDER
-                  }
-                />
-              }
-              className="text-soniox"
-            >
-              {renderPanelBody(SONIOX_PROVIDER)}
-            </Panel>
-          </TooltipProvider>
-        </div>
-
-        <div className="min-h-0 flex-1">
-          {comparisonProvider ? (
+        {shown.map((provider, index) => (
+          // Keyed by slot, not provider: a swap has to keep the card mounted
+          // for it to flip back rather than pop in.
+          <div key={index} className="min-h-0 flex-1">
             <MobileComparisonCard
-              provider={comparisonProvider}
-              title={
-                providerFeatures?.[comparisonProvider]?.name ?? comparisonProvider
-              }
-              subtitle={providerFeatures?.[comparisonProvider]?.model}
+              provider={provider}
+              title={nameOf(provider)}
+              subtitle={providerFeatures?.[provider]?.model}
               titleTooltip={
                 <ProviderFeaturesTooltip
-                  features={getProviderFeaturesList(comparisonProvider)}
+                  features={getProviderFeaturesList(provider)}
                 />
               }
               pickableProviders={pickableProviders}
               providerFeatures={providerFeatures}
-              onSwap={handleSwapProvider}
+              onSwap={handleSwapProvider(index)}
               disabled={isBusy}
               prefersReducedMotion={!!prefersReducedMotion}
+              className={accentOf(provider)}
             >
-              {renderPanelBody(comparisonProvider)}
+              {renderPanelBody(provider)}
             </MobileComparisonCard>
-          ) : (
+          </div>
+        ))}
+
+        {shown.length < MOBILE_CARD_LIMIT && (
+          <div className="min-h-0 flex-1">
             <AddProviderTile
-              remainingProviders={availableComparisonProviders}
+              remainingProviders={pickableProviders}
               providerFeatures={providerFeatures}
-              onAdd={(provider) => setSelectedProviders([provider])}
+              onAdd={(provider) => setSelectedProviders([...shown, provider])}
               disabled={isBusy}
               prefersReducedMotion={!!prefersReducedMotion}
             />
-          )}
-        </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -268,51 +223,6 @@ export const ProviderGrid = () => {
             "min-w-0 gap-3 overflow-y-auto p-3"
           )}
         >
-          {/* Soniox is always pinned first and is not sortable/removable. */}
-          <motion.div
-            key={SONIOX_PROVIDER}
-            layout
-            transition={springTransition}
-            {...cardMotion}
-            style={cardStyle}
-            className="group relative min-h-0"
-          >
-            <TooltipProvider>
-              <Panel
-                title={providerFeatures?.[SONIOX_PROVIDER]?.name ?? SONIOX_PROVIDER}
-                subtitle={providerFeatures?.[SONIOX_PROVIDER]?.model}
-                titleTooltip={
-                  <ProviderFeaturesTooltip
-                    features={getProviderFeaturesList(SONIOX_PROVIDER)}
-                  />
-                }
-                logo={
-                  <ProviderLogo
-                    provider={SONIOX_PROVIDER}
-                    name={
-                      providerFeatures?.[SONIOX_PROVIDER]?.name ??
-                      SONIOX_PROVIDER
-                    }
-                  />
-                }
-                priceSection={
-                  <ProviderCost
-                    provider={SONIOX_PROVIDER}
-                    providerName={
-                      providerFeatures?.[SONIOX_PROVIDER]?.name ??
-                      SONIOX_PROVIDER
-                    }
-                    disableTooltip={isDragging}
-                  />
-                }
-                className="text-soniox"
-                disableTitleTooltip={isDragging}
-              >
-                {renderPanelBody(SONIOX_PROVIDER)}
-              </Panel>
-            </TooltipProvider>
-          </motion.div>
-
           <SortableContext
             items={selectedProviders}
             strategy={rectSortingStrategy}
@@ -325,7 +235,7 @@ export const ProviderGrid = () => {
                 <SortableProviderCard
                   key={providerName}
                   provider={providerName}
-                  title={providerFeatures?.[providerName]?.name ?? providerName}
+                  title={nameOf(providerName)}
                   subtitle={providerFeatures?.[providerName]?.model}
                   titleTooltip={
                     <ProviderFeaturesTooltip
@@ -333,8 +243,10 @@ export const ProviderGrid = () => {
                     />
                   }
                   onRemove={() => handleRemoveProvider(providerName)}
+                  canRemove={canRemove}
                   disabled={isBusy}
                   disableTitleTooltip={isDragging}
+                  className={accentOf(providerName)}
                   dragActive={isDragging}
                   cardStyle={cardStyle}
                   prefersReducedMotion={!!prefersReducedMotion}

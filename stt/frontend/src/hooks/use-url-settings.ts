@@ -9,7 +9,6 @@ import {
 
 import {
   ALL_PROVIDERS_LIST,
-  SONIOX_PROVIDER,
   type ProviderName,
 } from "@/lib/provider-features";
 import { sanitizeLanguageHintsBasic } from "@/lib/language-hints";
@@ -27,17 +26,29 @@ export interface UrlSettings {
 const defaultLanguageHints: string[] = ["en"];
 const defaultContext: string = "";
 
-const initialComparisonProviders = ALL_PROVIDERS_LIST.filter(
-  (p) => p !== SONIOX_PROVIDER
-);
 const defaultSelectedProviders: ProviderName[] = [
-  ...initialComparisonProviders.slice(0, 2),
+  ...ALL_PROVIDERS_LIST.slice(0, 3),
 ];
 const defaultEnableSpeakerDiarization = true;
 const defaultEnableLanguageIdentification = true;
 const defaultEnableEndpointDetection = false;
 
 const providerLiterals = ALL_PROVIDERS_LIST as ReadonlyArray<ProviderName>;
+
+const baseProvidersParser = parseAsArrayOf(
+  parseAsStringLiteral(providerLiterals)
+);
+
+const sanitizeProviders = (providers: ProviderName[]): ProviderName[] => {
+  const unique = [...new Set(providers)];
+  return unique.length > 0 ? unique : defaultSelectedProviders;
+};
+
+const selectedProvidersParser = createParser({
+  parse: (query) => sanitizeProviders(baseProvidersParser.parse(query) ?? []),
+  serialize: baseProvidersParser.serialize.bind(baseProvidersParser),
+  eq: baseProvidersParser.eq?.bind(baseProvidersParser),
+}).withDefault(defaultSelectedProviders);
 
 const baseLanguageHintsParser = parseAsArrayOf(parseAsString);
 const languageHintsParser = createParser({
@@ -50,9 +61,7 @@ const languageHintsParser = createParser({
 const settingParsers = {
   languageHints: languageHintsParser,
   context: parseAsString.withDefault(defaultContext),
-  selectedProviders: parseAsArrayOf(
-    parseAsStringLiteral(providerLiterals)
-  ).withDefault(defaultSelectedProviders),
+  selectedProviders: selectedProvidersParser,
   enableSpeakerDiarization: parseAsBoolean.withDefault(
     defaultEnableSpeakerDiarization
   ),
@@ -66,6 +75,10 @@ const settingParsers = {
 };
 
 export type ParsedUrlSettings = inferParserType<typeof settingParsers>;
+
+export function activeProviders(settings: ParsedUrlSettings): ProviderName[] {
+  return sanitizeProviders(settings.selectedProviders ?? []);
+}
 
 export function useUrlSettings() {
   const [settings, setSettings] = useQueryStates(settingParsers, {
@@ -95,10 +108,7 @@ export function useUrlSettings() {
       String(settings.enableEndpointDetection)
     );
 
-    params.append("providers", "soniox");
-    if (settings.selectedProviders && settings.selectedProviders.length > 0) {
-      settings.selectedProviders.forEach((p) => params.append("providers", p));
-    }
+    activeProviders(settings).forEach((p) => params.append("providers", p));
 
     return params.toString();
   };
