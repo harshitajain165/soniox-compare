@@ -23,7 +23,7 @@ export const PROVIDER_PRICING: Partial<Record<ProviderName, ProviderPricing>> =
       tooltip: {
         description:
           "stt-rt-v5 bundles transcription and translation in one rate. " +
-          "Speech-to-speech adds tts-rt-v1.",
+          "Speech-to-speech adds tts-rt-v2.",
         updatedAt: "June 2026",
       },
     },

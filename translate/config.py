@@ -32,7 +32,7 @@ def get_soniox_service_config() -> ServiceConfig:
         websocket_url="wss://stt-rt.soniox.com/transcribe-websocket",
         model="stt-rt-v5",
         tts_websocket_url="wss://tts-rt.soniox.com/tts-websocket",
-        tts_model="tts-rt-v1",
+        tts_model="tts-rt-v2",
     )
 
 

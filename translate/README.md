@@ -10,7 +10,7 @@ Five runnable providers in `PROVIDER_MAP` (`main.py`), plus four declared greyed
 
 | Provider     | Key            | Model(s)                          | `s2s`? |
 | ------------ | -------------- | --------------------------------- | ------ |
-| Soniox       | `soniox`       | `stt-rt-v5` + `tts-rt-v1`         | Yes |
+| Soniox       | `soniox`       | `stt-rt-v5` + `tts-rt-v2`         | Yes |
 | OpenAI       | `openai`       | `gpt-realtime-translate`          | Yes |
 | Gemini       | `gemini`       | `gemini-3.5-live-translate-preview` | Yes |
 | Speechmatics | `speechmatics` | `enhanced`                        | No (no TTS) |

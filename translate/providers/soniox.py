@@ -21,7 +21,7 @@ log = logging.getLogger("translate.soniox")
 STT_ENDPOINT = "https://api.soniox.com/v1/models"
 TTS_ENDPOINT = "https://api.soniox.com/v1/tts-models"
 STT_MODEL = "stt-rt-v5"
-TTS_MODEL = "tts-rt-v1"
+TTS_MODEL = "tts-rt-v2"
 TTS_KEEPALIVE_SEC = 10
 STT_KEEPALIVE_SEC = 10
 # Bounds the post-send_end shutdown — Soniox doesn't always emit

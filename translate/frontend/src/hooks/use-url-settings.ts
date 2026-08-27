@@ -33,7 +33,7 @@ export interface UrlSettings {
 
 const defaultMode: Mode = "text";
 const defaultTargetLanguage = "es";
-const defaultVoice = "";
+const defaultVoice = "Daniel";
 const defaultLanguageHints: string[] = ["en"];
 
 const defaultSelectedProviders: ProviderName[] = [
@@ -46,7 +46,7 @@ const defaultEnableEndpointDetection = false;
 const providerLiterals = ALL_PROVIDERS_LIST as ReadonlyArray<ProviderName>;
 
 const baseProvidersParser = parseAsArrayOf(
-  parseAsStringLiteral(providerLiterals)
+  parseAsStringLiteral(providerLiterals),
 );
 
 const sanitizeProviders = (providers: ProviderName[]): ProviderName[] => {
