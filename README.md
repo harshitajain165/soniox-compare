@@ -63,7 +63,7 @@ Shared by all three apps:
 
 ## Environment variables
 
-A key is only needed for providers you run. Google STT/Gemini use a service-account JSON or API key rather than a simple key.
+A key is only needed for providers you run. Google TTS use a service-account JSON rather than a simple key.
 
 | Variable | stt | tts | translate | Provider |
 | --- | :-: | :-: | :-: | --- |
@@ -75,9 +75,8 @@ A key is only needed for providers you run. Google STT/Gemini use a service-acco
 | `ASSEMBLY_API_KEY` | ● | | | AssemblyAI |
 | `SPEECHMATICS_API_KEY` | ● | | ● | Speechmatics |
 | `AZURE_API_KEY` + `AZURE_REGION` | ● | ● | ● | Azure |
-| `GOOGLE_CREDENTIALS_JSON` | ● | | | Google STT |
 | `GOOGLE_CREDENTIALS_JSON_BASE64` | | ● | | Google TTS |
-| `GOOGLE_API_KEY` | | | ● | Gemini |
+| `GOOGLE_API_KEY` | ● | | ● | Gemini |
 
 Each `main.py` also reads optional `VERSION` and `LOG_LEVEL`.
 
