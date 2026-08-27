@@ -30,9 +30,9 @@ export const PROVIDER_PRICING: Record<ProviderName, ProviderPricing> = {
     },
   },
   google: {
-    pricePerHour: 0.96,
+    pricePerHour: 0.54,
     tooltip: {
-      updatedAt: "June 2026",
+      updatedAt: "August 2026",
     },
   },
   azure: {

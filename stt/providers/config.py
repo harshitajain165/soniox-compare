@@ -1,5 +1,3 @@
-from typing import Any, Optional
-
 from pydantic import BaseModel, Field
 from enum import Enum
 
@@ -66,14 +64,8 @@ class ServiceConfig(BaseModel):
     api_key: str = ""
     websocket_url: str = ""
     model: str = ""
-    credentials_fn: str = ""
     region: str = ""
-    project_id: str = ""
     prompt: str = ""
-    recognizer_id: str = ""
-    # Parsed service-account key (Google). Passed directly to the SDK so no
-    # credentials file needs to exist on disk in deployment.
-    credentials_info: Optional[dict[str, Any]] = None
 
 
 class ProviderParams(BaseModel):

@@ -1,17 +1,13 @@
-import logging
 import os
 
 from dotenv import load_dotenv
 
 from providers.config import ProviderParams, ProviderConfig, ServiceConfig
 from languages import LANGUAGE_MAP
-import json
 from copy import deepcopy
 
 
 load_dotenv()
-
-log = logging.getLogger("stt.config")
 
 
 def get_soniox_service_config():
@@ -81,58 +77,13 @@ def get_azure_service_config():
 
 
 def get_google_service_config():
-    # Chirp 3 is the latest Google Speech-to-Text V2 transcription model. It is only
-    # available in the `us` and `eu` multi-regions.
-    cfg = ServiceConfig(
-        model="chirp_3",
-        region="us",
-        recognizer_id="_",
+    # Gemini 3.5 Transcribe Live lives on the Gemini Developer API, which takes
+    # an API key — there is no service account, region or recognizer to pick as
+    # there was for Cloud Speech-to-Text. The model id is owned by
+    # GoogleProvider so the feature matrix and the session agree on it.
+    return ServiceConfig(
+        api_key=os.environ["GOOGLE_API_KEY"],
     )
-
-    # Credentials are passed directly to the SDK (see GoogleProvider), so no
-    # file needs to exist on disk in deployment. Prefer the GOOGLE_CREDENTIALS_JSON
-    # env var (paste the whole service-account JSON as the value)
-    # and fall back to the local ./credentials-google.json file for development.
-    credentials_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
-    if credentials_json:
-        credentials_data = json.loads(credentials_json)
-    else:
-        credentials_fn = "./credentials-google.json"
-        if not os.path.exists(credentials_fn):
-            raise ValueError(
-                "Google credentials not found: set GOOGLE_CREDENTIALS_JSON or "
-                f"provide {credentials_fn}."
-            )
-        with open(credentials_fn, "r") as f:
-            credentials_data = json.load(f)
-
-    cfg.credentials_info = credentials_data
-    cfg.project_id = credentials_data.get("project_id", cfg.project_id)
-    if not cfg.project_id:
-        raise ValueError(
-            "project_id not found in credentials and not set in GoogleConfig."
-        )
-
-    if cfg.recognizer_id == "_Default":
-        log.warning(
-            "GoogleConfig.recognizer_id was 'Default', correcting to '_'. "
-            "Using default ad-hoc recognizer."
-        )
-        cfg.recognizer_id = "_"
-    elif cfg.recognizer_id == "_":
-        log.info(
-            "GoogleConfig.recognizer_id is '_'. Using default ad-hoc recognizer "
-            "in region '%s'.",
-            cfg.region,
-        )
-    else:
-        log.info(
-            "GoogleConfig.recognizer_id is '%s'. Using specific recognizer in "
-            "region '%s'.",
-            cfg.recognizer_id,
-            cfg.region,
-        )
-    return cfg
 
 
 _SERVICE_CONFIG_FACTORIES = {
