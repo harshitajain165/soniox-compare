@@ -13,9 +13,9 @@ async def generate(text: str, language: str) -> AsyncIterator[bytes]:
         error_prefix="Soniox TTS error",
         headers={"Authorization": f"Bearer {api_key}"},
         json={
-            "model": "tts-rt-v1",
+            "model": "tts-rt-v2",
             "language": language,
-            "voice": "Nina",
+            "voice": "Daniel",
             "audio_format": "mp3",
             "text": text,
         },

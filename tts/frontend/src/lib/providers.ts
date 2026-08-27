@@ -19,7 +19,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<ProviderName, string> = {
 };
 
 export const PROVIDER_MODELS: Record<ProviderName, string> = {
-  soniox: "tts-rt-v1",
+  soniox: "tts-rt-v2",
   openai: "gpt-4o-mini-tts",
   elevenlabs: "eleven_v3",
   google: "gemini-2.5-flash-tts",

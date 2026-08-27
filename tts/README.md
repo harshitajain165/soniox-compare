@@ -4,13 +4,18 @@ Text-to-speech comparison. Type text, pick a language, and hear each provider sp
 
 **Part of [Soniox Compare](../README.md)** — see the root README for install, `./dev.sh`, ports, architecture, and the cross-app conventions (provider contract, `PROVIDER_MAP`, adding a provider, the `/compare/api` prefix, security headers). This file only covers what is specific to the `tts` app.
 
-## Providers
+- [Soniox](https://soniox.com/) — `tts-rt-v2`
+- [OpenAI](https://platform.openai.com/docs/guides/text-to-speech) — `gpt-4o-mini-tts`
+- [ElevenLabs](https://elevenlabs.io/) — `eleven_v3`
+- [Google](https://cloud.google.com/text-to-speech) — `gemini-2.5-flash-tts`
+- [Cartesia](https://cartesia.ai/) — `sonic-3.5`
+- [Azure](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/text-to-speech) — `dragon-hd-omni`
 
 Six providers, registered in `PROVIDER_MAP` (`main.py`) as `"<name>" -> <name>.generate`. Each `providers/<name>.py` exposes `async def generate(text, language) -> AsyncIterator[bytes]` yielding mp3. Models/voices are hard-coded in each module.
 
 | Provider   | Key          | Model / voice |
 | ---------- | ------------ | ------------- |
-| Soniox     | `soniox`     | `tts-rt-v1` (voice `Nina`) |
+| Soniox     | `soniox`     | `tts-rt-v2` (voice `Daniel`) |
 | Google     | `google`     | `gemini-2.5-flash-tts` |
 | OpenAI     | `openai`     | `gpt-4o-mini-tts` (voice `marin`) |
 | ElevenLabs | `elevenlabs` | `eleven_v3` |
