@@ -26,6 +26,7 @@ from providers.speechmatics import SpeechmaticsProvider
 from providers.openai import OpenaiProvider
 from providers.cartesia import CartesiaProvider
 from providers.elevenlabs import ElevenlabsProvider
+from providers.meta import MetaProvider
 
 from providers.config import ProviderParams
 
@@ -39,6 +40,7 @@ PROVIDER_MAP: Dict[str, type[BaseProvider]] = {
     "speechmatics": SpeechmaticsProvider,
     "cartesia": CartesiaProvider,
     "elevenlabs": ElevenlabsProvider,
+    "meta": MetaProvider,
 }
 
 load_dotenv()

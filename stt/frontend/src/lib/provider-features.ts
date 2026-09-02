@@ -8,6 +8,7 @@ export const ALL_PROVIDERS_LIST = [
   "assembly",
   "cartesia",
   "elevenlabs",
+  "meta",
 ] as const;
 export type ProviderName = (typeof ALL_PROVIDERS_LIST)[number];
 
@@ -25,6 +26,7 @@ export const PROVIDER_ICON_FILES: Record<ProviderName, string> = {
   assembly: "assemblyai-icon.svg",
   cartesia: "cartesia-icon.svg",
   elevenlabs: "elevenlabs-icon.svg",
+  meta: "meta-icon.svg",
 };
 
 export const getProviderIcon = (provider: ProviderName): string =>

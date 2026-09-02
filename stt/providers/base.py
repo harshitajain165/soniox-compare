@@ -2,7 +2,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, ClassVar
 from providers.config import ProviderConfig, SupportedFeatures, FeatureState
-from utils import info_message
+from utils import info_message, raw_message
 
 # How long receive() blocks for a first event before returning empty, so the
 # per-provider forward loop in main.py stays responsive to cancellation.
@@ -24,6 +24,17 @@ class BaseProvider(ABC):
 
     def is_connected(self) -> bool:
         return self._is_connected
+
+    def emit_raw(self, payload: Any, verbatim: bool | None = None) -> None:
+        """Queue an upstream provider message alongside the normalized events,
+        so the frontend can show what the provider actually sent.
+
+        Non-blocking (`host_queue` is unbounded) so it is safe to call from the
+        synchronous SDK callbacks some providers use. Callbacks that run off the
+        event loop must still hop back onto it first. See `raw_message` for
+        `verbatim`.
+        """
+        self.host_queue.put_nowait(raw_message(self.name, payload, verbatim))
 
     def validate_provider_capabilities(self, name: str) -> List[Dict[str, Any]]:
         """

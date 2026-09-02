@@ -140,6 +140,7 @@ class OpenaiProvider(BaseProvider):
             non_final_parts = []
 
             async for resp in self.websocket:
+                self.emit_raw(resp)
                 event = json.loads(resp)
 
                 event_type = event.get("type")

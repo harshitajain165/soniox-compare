@@ -21,6 +21,7 @@ export interface UrlSettings {
   enableLanguageIdentification: boolean;
   enableEndpointDetection: boolean;
   selectedFileName: string | null;
+  rawMode: boolean;
 }
 
 const defaultLanguageHints: string[] = ["en"];
@@ -72,6 +73,9 @@ const settingParsers = {
     defaultEnableEndpointDetection
   ),
   selectedFileName: parseAsString,
+  // View-only: swaps the rendered transcript for the provider's raw messages.
+  // Not forwarded to the backend, which always streams them.
+  rawMode: parseAsBoolean.withDefault(false),
 };
 
 export type ParsedUrlSettings = inferParserType<typeof settingParsers>;
@@ -129,6 +133,7 @@ export function useUrlSettings() {
       setSettings({ enableEndpointDetection: enabled }),
     setSelectedFileName: (fileName: string | null) =>
       setSettings({ selectedFileName: fileName }),
+    setRawMode: (enabled: boolean) => setSettings({ rawMode: enabled }),
     getSettingsAsUrlParams,
   };
 }

@@ -212,7 +212,26 @@ class AzureProvider(BaseProvider):
 
     # --- Event handlers for ConversationTranscriber (STT mode) ---
 
+    def _emit_raw_threadsafe(self, evt) -> None:
+        """Hand an SDK event to the raw stream from the SDK's own thread.
+
+        `result.json` carries the service's own response body, so it goes over
+        as-is. Events without one (e.g. cancellation) only exist as the SDK's
+        rendering of them, which is flagged as not verbatim.
+        """
+        if self._loop is None:
+            return
+        try:
+            body = getattr(evt.result, "json", None)
+        except Exception:
+            body = None
+        if body:
+            self._loop.call_soon_threadsafe(self.emit_raw, body)
+        else:
+            self._loop.call_soon_threadsafe(self.emit_raw, str(evt), False)
+
     def _on_transcribing(self, evt):
+        self._emit_raw_threadsafe(evt)
         if self._loop:
             result: ConversationTranscriptionResult = evt.result
 
@@ -243,6 +262,7 @@ class AzureProvider(BaseProvider):
             asyncio.run_coroutine_threadsafe(self._handle_result([part]), self._loop)
 
     def _on_transcribed(self, evt):
+        self._emit_raw_threadsafe(evt)
         if self._loop:
             result: ConversationTranscriptionResult = evt.result
             text = result.text
@@ -294,6 +314,7 @@ class AzureProvider(BaseProvider):
                 )
 
     def _on_canceled(self, evt):
+        self._emit_raw_threadsafe(evt)
         error = evt.error_details or "Recognition canceled"
         if self._loop:
             asyncio.run_coroutine_threadsafe(self._handle_error(error), self._loop)

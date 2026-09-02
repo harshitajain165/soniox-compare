@@ -77,6 +77,7 @@ A key is only needed for providers you run. Google TTS use a service-account JSO
 | `AZURE_API_KEY` + `AZURE_REGION` | ● | ● | ● | Azure |
 | `GOOGLE_CREDENTIALS_JSON_BASE64` | | ● | | Google TTS |
 | `GOOGLE_API_KEY` | ● | | ● | Gemini |
+| `META_API_KEY` | ● | | | Meta |
 
 Each `main.py` also reads optional `VERSION` and `LOG_LEVEL`.
 

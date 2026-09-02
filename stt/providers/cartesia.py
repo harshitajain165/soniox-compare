@@ -140,6 +140,7 @@ class CartesiaProvider(BaseProvider):
         # to every turn after the first to keep concatenated turns readable.
         try:
             async for resp in self.websocket:
+                self.emit_raw(resp)
                 data = json.loads(resp)
                 msg_type = data.get("type")
 

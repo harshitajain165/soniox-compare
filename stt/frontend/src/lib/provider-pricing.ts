@@ -71,6 +71,12 @@ export const PROVIDER_PRICING: Record<ProviderName, ProviderPricing> = {
       updatedAt: "June 2026",
     },
   },
+  meta: {
+    pricePerHour: 0.18,
+    tooltip: {
+      updatedAt: "September 2026",
+    },
+  },
 };
 
 export const getProviderPricing = (

@@ -143,6 +143,7 @@ class SpeechmaticsProvider(BaseProvider):
     async def _recv_loop(self):
         try:
             async for resp in self.websocket:
+                self.emit_raw(resp)
                 data = json.loads(resp)
                 msg_type = data.get("message")
                 if msg_type in (

@@ -166,15 +166,17 @@ class ElevenlabsProvider(BaseProvider):
             pass
 
 
-    def _on_session_started(self, _data: dict[str, Any]) -> None:
-        pass
+    def _on_session_started(self, data: dict[str, Any]) -> None:
+        self.emit_raw(data)
 
     def _on_partial_transcript(self, data: dict[str, Any]) -> None:
+        self.emit_raw(data)
         text = data.get("text") or ""
         if text:
             self._emit_parts([make_part(text=text, is_final=False)])
 
     def _on_committed_transcript(self, data: dict[str, Any]) -> None:
+        self.emit_raw(data)
         language = data.get("language_code")
         words = data.get("words")
 
@@ -260,6 +262,7 @@ class ElevenlabsProvider(BaseProvider):
         )
 
     def _on_error(self, data: Any) -> None:
+        self.emit_raw(data)
         message = data.get("error") if isinstance(data, dict) else data
         self.error = ProviderError(str(message))
         self.host_queue.put_nowait(

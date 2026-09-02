@@ -19,6 +19,15 @@ const USE_MOCK_DATA = false;
 // window so providers that only finalize on close (e.g. Cartesia, Google) can
 // flush their last transcript before we close the connection.
 const WS_DRAIN_MS = 5000;
+
+// Raw mode keeps every message a provider sent, so a chatty provider on a long
+// session is capped to protect the render. The newest messages are kept.
+const MAX_RAW_MESSAGES_PER_PROVIDER = 2000;
+
+// Raw messages are buffered outside React and published on this interval, so a
+// burst from a chatty provider costs one render rather than one per message.
+const RAW_FLUSH_MS = 100;
+
 export interface TranscriptPart {
   text: string;
   speaker?: number | null;
@@ -32,6 +41,21 @@ export interface InfoMessage {
   message: string;
   level: "info" | "warning" | "error";
 }
+
+// A message the provider itself sent upstream, forwarded by the backend and
+// shown unaggregated in raw mode. `seq` is a session-independent id, so rows
+// keep their identity as the buffer drops its oldest entries. `at` is the
+// arrival time, used to show how the messages were spaced out. `verbatim` is
+// false when the provider's SDK parsed the message before we saw it and the
+// text is our re-serialization of it rather than the frame off the wire.
+export interface RawProviderMessage {
+  seq: number;
+  at: number;
+  data: string;
+  verbatim: boolean;
+}
+
+export type RawOutputs = Record<ProviderName, RawProviderMessage[]>;
 
 export interface OutputData {
   statusMessage: string;
@@ -68,6 +92,7 @@ export interface RawMessage {
 interface ComparisonContextState {
   recordingState: AudioRecordingState;
   providerOutputs: ProviderOutputs;
+  rawOutputs: RawOutputs;
   providerTimings: ProviderTimings;
   appError: string | null;
   rawMessages: RawMessage[];
@@ -99,21 +124,27 @@ interface BackendTranscriptPart {
   confidence?: number | null;
 }
 
+const emptyOutput = (statusMessage = ""): OutputData => ({
+  statusMessage,
+  finalParts: [],
+  nonFinalParts: [],
+  error: "",
+  infoMessages: [],
+});
+
 const initializeProviderOutputs = (
   providers: ProviderName[]
-): ProviderOutputs => {
-  const initialOutput: OutputData = {
-    statusMessage: "",
-    finalParts: [],
-    nonFinalParts: [],
-    error: "",
-    infoMessages: [],
-  };
-  return providers.reduce((acc, provider) => {
-    acc[provider] = { ...initialOutput };
+): ProviderOutputs =>
+  providers.reduce((acc, provider) => {
+    acc[provider] = emptyOutput();
     return acc;
   }, {} as ProviderOutputs);
-};
+
+const initializeRawOutputs = (providers: ProviderName[]): RawOutputs =>
+  providers.reduce((acc, provider) => {
+    acc[provider] = [];
+    return acc;
+  }, {} as RawOutputs);
 
 const initializeProviderTimings = (
   providers: ProviderName[]
@@ -155,6 +186,9 @@ export const ComparisonProvider = ({
     initializeProviderTimings(providers)
   );
   const [appError, setAppError] = useState<string | null>(null);
+  const [rawOutputs, setRawOutputs] = useState<RawOutputs>(() =>
+    initializeRawOutputs(providers)
+  );
   const [rawMessages, setRawMessages] = useState<RawMessage[]>([]);
   const [audioReady, setAudioReady] = useState(true);
   const [selectedAudioFileName, setSelectedAudioFileName] = useState<
@@ -172,44 +206,114 @@ export const ComparisonProvider = ({
   const fileSourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const activeProvidersRef = useRef<ProviderName[]>([]);
+  // Raw messages live outside React until they are actually on screen: they
+  // arrive for every upstream event, and putting each one through state would
+  // re-render every card even while the transcript view is up.
+  const rawBufferRef = useRef<Partial<Record<ProviderName, RawProviderMessage[]>>>(
+    {}
+  );
+  const rawDirtyRef = useRef<Set<ProviderName>>(new Set());
+  const rawFlushRef = useRef<number | null>(null);
+  const rawModeRef = useRef(false);
+  // Never reset, so a row's identity cannot be reused by a later message.
+  const rawSeqRef = useRef(0);
   const recordingStateRef = useRef(recordingState);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
 
   const { settings, getSettingsAsUrlParams } = useUrlSettings();
 
+  const flushRawMessages = useCallback(() => {
+    if (rawFlushRef.current !== null) {
+      window.clearTimeout(rawFlushRef.current);
+      rawFlushRef.current = null;
+    }
+    if (rawDirtyRef.current.size === 0) return;
+
+    const dirty = rawDirtyRef.current;
+    rawDirtyRef.current = new Set();
+    setRawOutputs((prev) => {
+      const next = { ...prev };
+      dirty.forEach((provider) => {
+        // Copied because the buffer keeps being appended to in place.
+        next[provider] = [...(rawBufferRef.current[provider] || [])];
+      });
+      return next;
+    });
+  }, []);
+
+  const appendRawMessage = useCallback(
+    (provider: ProviderName, message: RawProviderMessage) => {
+      const buffer = rawBufferRef.current;
+      const messages = buffer[provider] || (buffer[provider] = []);
+      messages.push(message);
+      if (messages.length > MAX_RAW_MESSAGES_PER_PROVIDER) {
+        messages.splice(0, messages.length - MAX_RAW_MESSAGES_PER_PROVIDER);
+      }
+
+      // Nothing is rendering these yet; they are published if raw mode is
+      // switched on, which can happen at any point including after the session.
+      if (!rawModeRef.current) return;
+
+      rawDirtyRef.current.add(provider);
+      if (rawFlushRef.current === null) {
+        rawFlushRef.current = window.setTimeout(flushRawMessages, RAW_FLUSH_MS);
+      }
+    },
+    [flushRawMessages]
+  );
+
+  const resetRawMessages = useCallback((providersToReset: ProviderName[]) => {
+    providersToReset.forEach((provider) => {
+      rawBufferRef.current[provider] = [];
+      rawDirtyRef.current.delete(provider);
+    });
+    setRawOutputs((prev) => {
+      const next = { ...prev };
+      providersToReset.forEach((provider) => {
+        next[provider] = [];
+      });
+      return next;
+    });
+  }, []);
+
+  // Publish everything buffered so far the moment raw mode is switched on, and
+  // stop publishing once it is switched off.
+  useEffect(() => {
+    rawModeRef.current = settings.rawMode;
+    if (!settings.rawMode) return;
+    (Object.keys(rawBufferRef.current) as ProviderName[]).forEach((provider) =>
+      rawDirtyRef.current.add(provider)
+    );
+    flushRawMessages();
+  }, [settings.rawMode, flushRawMessages]);
+
+  useEffect(
+    () => () => {
+      if (rawFlushRef.current !== null) {
+        window.clearTimeout(rawFlushRef.current);
+      }
+    },
+    []
+  );
+
   const resetProviderOutputs = useCallback(
     (providersToReset: ProviderName[]) => {
       setProviderOutputs((prev) => {
         const newState = { ...prev };
         providersToReset.forEach((p) => {
-          newState[p] = {
-            statusMessage: "",
-            finalParts: [],
-            nonFinalParts: [],
-            error: "",
-            infoMessages: [],
-          };
+          newState[p] = emptyOutput();
         });
         return newState;
       });
+      resetRawMessages(providersToReset);
     },
-    []
+    [resetRawMessages]
   );
 
   const clearTranscriptOutputs = () => {
-    setProviderOutputs(
-      providers.reduce((acc, provider) => {
-        acc[provider] = {
-          finalParts: [],
-          nonFinalParts: [],
-          error: "",
-          statusMessage: "",
-          infoMessages: [],
-        };
-        return acc;
-      }, {} as ProviderOutputs)
-    );
+    setProviderOutputs(initializeProviderOutputs(providers));
+    resetRawMessages(providers);
     setProviderTimings(initializeProviderTimings(providers));
     setAppError(null);
   };
@@ -441,13 +545,7 @@ export const ComparisonProvider = ({
     setProviderOutputs((prev) => {
       const newState = { ...prev };
       currentProviders.forEach((p) => {
-        newState[p] = {
-          statusMessage: "Initializing...",
-          finalParts: [],
-          nonFinalParts: [],
-          error: "",
-          infoMessages: [],
-        };
+        newState[p] = emptyOutput("Initializing...");
       });
       return newState;
     });
@@ -592,6 +690,22 @@ export const ComparisonProvider = ({
 
         const provider = result.provider as ProviderName;
 
+        // A passthrough copy of a message that also arrives normalized, so it
+        // is buffered on the side and never touches the transcript state.
+        if (result.type === "raw") {
+          if (provider) {
+            appendRawMessage(provider, {
+              seq: rawSeqRef.current++,
+              at: Date.now(),
+              data: String(result.raw ?? ""),
+              verbatim: result.verbatim !== false,
+            });
+          }
+          return;
+        }
+
+        // The recorder captures the normalized stream (it is what mock sessions
+        // replay), so the passthrough copies above are left out of it.
         if (typeof rawData === "string" && provider) {
           setRawMessages((prevRawMessages) => [
             ...prevRawMessages,
@@ -710,6 +824,7 @@ export const ComparisonProvider = ({
     stopRecordingInternal,
     resetProviderOutputs,
     getSettingsAsUrlParams,
+    appendRawMessage,
   ]);
 
   useEffect(() => {
@@ -735,6 +850,7 @@ export const ComparisonProvider = ({
   const contextValue: ComparisonContextType = {
     recordingState,
     providerOutputs,
+    rawOutputs,
     providerTimings,
     appError,
     rawMessages,

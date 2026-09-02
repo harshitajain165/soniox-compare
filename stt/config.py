@@ -69,6 +69,16 @@ def get_elevenlabs_service_config():
     )
 
 
+def get_meta_service_config():
+    return ServiceConfig(
+        api_key=os.environ["META_API_KEY"],
+        # The realtime endpoint authenticates in the handshake frame, so the key
+        # is carried into the session rather than sent as a header.
+        websocket_url="wss://api.meta.ai/v1/asr/realtime",
+        model="muse-voice-transcribe-1.0",
+    )
+
+
 def get_azure_service_config():
     return ServiceConfig(
         api_key=os.environ["AZURE_API_KEY"],
@@ -96,6 +106,7 @@ _SERVICE_CONFIG_FACTORIES = {
     "assembly": get_assembly_service_config,
     "openai": get_openai_service_config,
     "elevenlabs": get_elevenlabs_service_config,
+    "meta": get_meta_service_config,
 }
 
 

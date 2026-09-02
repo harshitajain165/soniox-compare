@@ -96,6 +96,7 @@ class SonioxProvider(BaseProvider):
     async def _recv_loop(self):
         try:
             async for resp in self.websocket:
+                self.emit_raw(resp)
                 data = json.loads(resp)
                 if "error_message" in data:
                     await self._handle_error(data["error_message"])

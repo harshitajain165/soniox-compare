@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 interface AutoScrollContainerProps
   extends React.ComponentPropsWithoutRef<"div"> {
   className?: string;
+  followKey?: unknown;
 }
 
 /**
@@ -14,10 +15,11 @@ interface AutoScrollContainerProps
 export const AutoScrollContainer = ({
   className,
   children,
+  followKey,
   ...props
 }: AutoScrollContainerProps) => {
   const { containerRef, contentRef, scrollToBottom, isScrolledToBottom } =
-    useAutoScroll();
+    useAutoScroll({ followKey });
 
   return (
     <div className="relative h-full w-full">
@@ -51,7 +53,14 @@ export const AutoScrollContainer = ({
  * Hook to handle automatic scrolling with user override and resize detection.
  */
 
-export function useAutoScroll({ scrolledToBottomThreshold = 50 } = {}) {
+export function useAutoScroll({
+  scrolledToBottomThreshold = 50,
+  // When set, the content is followed as this value changes rather than on any
+  // growth in content height. Pass it when the content can also grow from user
+  // interaction (e.g. expanding a collapsed row), which must not move the
+  // viewport.
+  followKey,
+}: { scrolledToBottomThreshold?: number; followKey?: unknown } = {}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
 
@@ -103,6 +112,8 @@ export function useAutoScroll({ scrolledToBottomThreshold = 50 } = {}) {
     return () => container.removeEventListener("scroll", handleScroll);
   }, [scrolledToBottomThreshold]);
 
+  const followsContent = followKey === undefined;
+
   // Effect for observing content size changes (new messages, content clears)
   useEffect(() => {
     const container = containerRef.current;
@@ -115,9 +126,14 @@ export function useAutoScroll({ scrolledToBottomThreshold = 50 } = {}) {
       const atBottom =
         scrollHeight - scrollTop <= clientHeight + scrolledToBottomThreshold;
 
-      // 1. Detect if content has been cleared (height shrinks)
-      const contentShrank = scrollHeight < lastScrollHeightRef.current;
-      if (contentShrank) {
+      // 1. Detect if content has been cleared. Only a shrink back to something
+      //    that fits counts: content that shrinks but still overflows was
+      //    reflowed rather than cleared, and hijacking the user's scroll
+      //    position for that would fight them.
+      const contentCleared =
+        scrollHeight < lastScrollHeightRef.current &&
+        scrollHeight <= clientHeight;
+      if (contentCleared) {
         // If content was cleared, we must re-enable auto-scroll for subsequent messages
         setShouldAutoScroll(true);
       }
@@ -126,7 +142,7 @@ export function useAutoScroll({ scrolledToBottomThreshold = 50 } = {}) {
       setIsScrolledToBottom(atBottom);
 
       // 3. If auto-scroll is enabled, perform the scroll
-      if (shouldAutoScroll) {
+      if (followsContent && shouldAutoScroll) {
         scrollToBottom();
       }
 
@@ -136,7 +152,28 @@ export function useAutoScroll({ scrolledToBottomThreshold = 50 } = {}) {
 
     observer.observe(content);
     return () => observer.disconnect();
-  }, [shouldAutoScroll, scrollToBottom, scrolledToBottomThreshold]);
+  }, [
+    followsContent,
+    shouldAutoScroll,
+    scrollToBottom,
+    scrolledToBottomThreshold,
+  ]);
+
+  // Read through a ref by the effect below, which must run when `followKey`
+  // changes and at no other time.
+  const shouldAutoScrollRef = useRef(shouldAutoScroll);
+  useEffect(() => {
+    shouldAutoScrollRef.current = shouldAutoScroll;
+  }, [shouldAutoScroll]);
+
+  // Effect for following explicit updates (e.g. a new message) when the caller
+  // opted out of following content height.
+  useEffect(() => {
+    if (followKey === undefined) return;
+    if (shouldAutoScrollRef.current) {
+      scrollToBottom();
+    }
+  }, [followKey, scrollToBottom]);
 
   return {
     containerRef,

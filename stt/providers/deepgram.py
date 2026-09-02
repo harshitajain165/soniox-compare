@@ -143,6 +143,7 @@ class DeepgramProvider(BaseProvider):
     async def _recv_loop(self):
         try:
             async for msg in self.websocket:
+                self.emit_raw(msg)
                 data = json.loads(msg)
                 if (
                     "channel" in data

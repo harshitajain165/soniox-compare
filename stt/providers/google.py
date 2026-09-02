@@ -222,6 +222,8 @@ class GoogleProvider(BaseProvider):
                     stream = session.receive().__aiter__()
                     continue
 
+                self.emit_raw(response)
+
                 if response.go_away is not None:
                     log.warning(
                         "google.go_away time_left=%s",

@@ -107,11 +107,7 @@ export const TranscriptRenderer = ({ outputData, appError }: Props) => {
           part={part}
           isFinalStyling={isFinalStyling}
           textToRender={textToRender}
-          displayedLanguage={
-            partLanguage !== previousPartLanguage && displayLanguageTag
-              ? partLanguage
-              : null
-          }
+          displayedLanguage={displayLanguageTag ? partLanguage : null}
           onNewLine={
             partLanguage !== previousPartLanguage &&
             !displaySpeakerName &&
@@ -175,7 +171,7 @@ export const TranscriptRenderer = ({ outputData, appError }: Props) => {
 
 const MAX_ERROR_LENGTH = 150;
 
-const ErrorMessage = ({ error }: { error: string }) => {
+export const ErrorMessage = ({ error }: { error: string }) => {
   if (error.length <= MAX_ERROR_LENGTH) {
     return (
       <div className="text-soniox bg-blue-50 p-2 md:p-4 absolute left-1/2 top-1/2 -translate-y-1/2 -translate-x-1/2 text-center text-sm rounded-2xl max-w-[90%]">

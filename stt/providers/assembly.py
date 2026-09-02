@@ -170,6 +170,7 @@ class AssemblyProvider(BaseProvider):
         return ord(label.upper()) - ord("A") + 1
 
     async def _on_turn(self, _client: AsyncStreamingClient, event: TurnEvent) -> None:
+        self.emit_raw(event)
         is_final = event.end_of_turn
 
         parts = []
@@ -212,17 +213,18 @@ class AssemblyProvider(BaseProvider):
             }
         )
 
-    async def _on_begin(self, _client: AsyncStreamingClient, _event: BeginEvent) -> None:
-        pass
+    async def _on_begin(self, _client: AsyncStreamingClient, event: BeginEvent) -> None:
+        self.emit_raw(event)
 
     async def _on_terminated(
-        self, _client: AsyncStreamingClient, _event: TerminationEvent
+        self, _client: AsyncStreamingClient, event: TerminationEvent
     ) -> None:
-        pass
+        self.emit_raw(event)
 
     async def _on_error(
         self, _client: AsyncStreamingClient, error: StreamingError
     ) -> None:
+        self.emit_raw(error)
         self.error = error
         await self._handle_error(error)
 

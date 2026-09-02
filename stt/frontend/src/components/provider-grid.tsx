@@ -11,6 +11,7 @@ import { AddProviderTile } from "./add-provider-tile";
 import { MobileComparisonCard } from "./mobile-comparison-card";
 import { SortableProviderCard } from "./sortable-provider-card";
 import { TranscriptRenderer } from "./transcript-renderer";
+import { RawMessageRenderer } from "./raw-message-renderer";
 import { AnimatePresence, useReducedMotion } from "motion/react";
 import {
   DndContext,
@@ -32,9 +33,10 @@ const MOBILE_CARD_LIMIT = 2;
 
 export const ProviderGrid = () => {
   const { settings, setSelectedProviders } = useUrlSettings();
-  const { selectedProviders = [] } = settings;
+  const { selectedProviders = [], rawMode } = settings;
 
-  const { providerOutputs, appError, recordingState } = useComparison();
+  const { providerOutputs, rawOutputs, appError, recordingState } =
+    useComparison();
   const { providerFeatures, availableProviders, getProviderFeaturesList } =
     useFeatures();
 
@@ -127,13 +129,21 @@ export const ProviderGrid = () => {
       statusMessage: "Waiting for data...",
       finalParts: [],
       nonFinalParts: [],
-      error: null,
+      error: "",
       infoMessages: [],
     };
     return (
       <div className="absolute flex flex-col inset-0">
         <div className="relative flex-1">
-          <TranscriptRenderer outputData={outputData} appError={appError} />
+          {rawMode ? (
+            <RawMessageRenderer
+              messages={rawOutputs[providerName] || []}
+              statusMessage={outputData.statusMessage}
+              appError={appError}
+            />
+          ) : (
+            <TranscriptRenderer outputData={outputData} appError={appError} />
+          )}
         </div>
         <InfoMessages
           infoMessages={
