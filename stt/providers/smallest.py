@@ -145,6 +145,7 @@ class SmallestProvider(BaseProvider):
     async def _recv_loop(self):
         try:
             async for resp in self.websocket:
+                self.emit_raw(resp)
                 data = json.loads(resp)
                 msg_type = data.get("type")
 
@@ -194,7 +195,7 @@ class SmallestProvider(BaseProvider):
                         language=language,
                         start_ms=int(start_s * 1000) if start_s is not None else None,
                         end_ms=int(end_s * 1000) if end_s is not None else None,
-                        confidence=word.get("confidence", 1.0),
+                        confidence=word.get("confidence"),
                     )
                 )
         else:
