@@ -31,7 +31,10 @@ class SmallestProvider(BaseProvider):
     def get_lang_cfg(self) -> str:
         hints = self.config.params.language_hints
         if len(hints) == 0:
-            return "en"
+            # Pulse requires an explicit language: it has no universal
+            # auto-detect mode, only regional aggregators (north_indic,
+            # multi-asian, multi-south-indic) this provider doesn't use.
+            raise ProviderError("Smallest AI (Pulse) requires a language hint.")
 
         lang_mapping = get_language_mapping("smallest")
         lang_hint = hints[0]
@@ -168,7 +171,12 @@ class SmallestProvider(BaseProvider):
 
         is_final = bool(data.get("is_final", False))
         is_last = bool(data.get("is_last", False))
-        language = data.get("language")
+        # `language` just echoes the language we requested, not a detected
+        # one, so it's only surfaced when the user actually asked for
+        # identification (see `language_identification` below).
+        language = None
+        if self.config.params.enable_language_identification:
+            language = data.get("language")
         words = data.get("words") or []
 
         parts: list[dict[str, Any]] = []
@@ -238,11 +246,11 @@ class SmallestProvider(BaseProvider):
             # universal any-language auto-detect mode.
             single_multilingual_model=unsupported,
             language_hints=supported,
-            language_identification=FeatureStatus.partial(
-                comment="`language`/`languages` are reported on final "
-                "transcripts, but there is no single auto-detect mode "
-                "spanning all languages — only regional aggregators. A "
-                "single explicit language hint is passed through as-is here.",
+            language_identification=FeatureStatus.unsupported(
+                comment="`language` on the response echoes back the single "
+                "language hint we requested rather than identifying one — "
+                "there is no auto-detect mode spanning all languages, only "
+                "regional aggregators this provider doesn't use.",
             ),
             speaker_diarization=supported,
             customization=FeatureStatus.supported(

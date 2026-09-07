@@ -78,12 +78,12 @@ export const PROVIDER_PRICING: Record<ProviderName, ProviderPricing> = {
     },
   },
   smallest: {
-    pricePerHour: 0.54,
+    pricePerHour: 0.24,
     tooltip: {
       description:
-        "Pulse has no standalone published per-hour API rate; derived from " +
-        "the Atoms bundled rate of ~$0.009/min of audio.",
-      updatedAt: "August 2026",
+        "Pulse (Realtime) pay-as-you-go rate: ~$0.004/minute of streamed " +
+        "audio, per smallest.ai/pricing/models.",
+      updatedAt: "September 2026",
     },
   },
 };

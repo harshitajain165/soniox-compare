@@ -87,24 +87,24 @@ export const PROVIDER_PRICING: Record<ProviderName, ProviderPricing> = {
   },
   smallest: {
     billing: "characters",
-    pricePerThousandChars: 0,
-    pricePerHour: 0,
+    pricePerThousandChars: 0.0175,
+    pricePerHour: 1.05,
     tooltip: {
       description:
-        "Waves API (Lightning) has no published per-character price; see " +
-        "smallest.ai/pricing or contact sales.",
-      updatedAt: "July 2026",
+        "Lightning v3.1: $0.175 per 10K characters, per " +
+        "smallest.ai/pricing/models; converted at ~1K characters/minute.",
+      updatedAt: "September 2026",
     },
   },
   smallest_pro: {
     billing: "characters",
-    pricePerThousandChars: 0,
-    pricePerHour: 0,
+    pricePerThousandChars: 0.0195,
+    pricePerHour: 1.17,
     tooltip: {
       description:
-        "Waves API (Lightning v3.1 Pro) has no published per-character " +
-        "price; see smallest.ai/pricing or contact sales.",
-      updatedAt: "July 2026",
+        "Lightning v3.1 Pro: $0.195 per 10K characters, per " +
+        "smallest.ai/pricing/models; converted at ~1K characters/minute.",
+      updatedAt: "September 2026",
     },
   },
 };
